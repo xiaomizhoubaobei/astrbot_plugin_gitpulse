@@ -1,1 +1,1 @@
-"""GitHub Webhook 插件单元测试包."""
+"""Unit test package for the GitPulse plugin."""

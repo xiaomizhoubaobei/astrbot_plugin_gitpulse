@@ -3,7 +3,7 @@ display_name: GitPulse 插件
 author: TatsukiMeng
 version: 0.0.1
 description: 将 GitHub 事件（push、issue、PR 等）转发到聊天平台的插件
-repo: https://github.com/TatsukiMengChen/astrbot_plugin_github_webhook
+repo: https://github.com/xiaomizhoubaobei/astrbot_plugin_gitpulse
 license: MIT
 tags:
   - Github

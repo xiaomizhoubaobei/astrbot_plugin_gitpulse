@@ -1,4 +1,4 @@
-"""GitHub Webhook Plugin configuration management."""
+"""GitPulse plugin configuration management."""
 
 from __future__ import annotations
 

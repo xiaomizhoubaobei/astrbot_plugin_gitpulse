@@ -119,7 +119,7 @@ GitHub Webhook: LLM Processing for push event
 **示例日志（截断警告）**：
 ```
 GitHub Webhook: LLM response received, length: 312 chars
-  Output preview (first 300 chars): [推送] TatsukiMengChen/astrbot_plugin_github_webhook
+  Output preview (first 300 chars): [推送] TatsukiMengChen/astrbot_plugin_gitpulse
 -----------------------------------------------------------------
 GitHub Webhook: LLM output suspiciously short (input: 523 chars, output: 312 chars)
 ```
@@ -204,10 +204,10 @@ grep "GitHub Webhook: Configuration loaded" astrbot.log
 
 ```bash
 # 检查文件权限
-ls -la data/config/astrbot_plugin_github_webhook_config.json
+ls -la data/config/astrbot_plugin_gitpulse_config.json
 
 # 如果权限不正确，修复
-chmod 644 data/config/astrbot_plugin_github_webhook_config.json
+chmod 644 data/config/astrbot_plugin_gitpulse_config.json
 ```
 
 ## 获取更多帮助

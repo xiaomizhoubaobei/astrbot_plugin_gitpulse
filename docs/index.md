@@ -1,6 +1,6 @@
 # 文档索引
 
-欢迎来到 AstrBot GitHub Webhook Plugin 文档中心。
+欢迎来到 GitPulse 文档中心。
 
 ## 快速开始
 

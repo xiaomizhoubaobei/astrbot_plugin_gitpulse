@@ -1,6 +1,6 @@
-# AstrBot GitHub Webhook Plugin
+# GitPulse
 
-AstrBot 插件，用于接收 GitHub 事件（push、issues、pull requests 等）并转发到聊天平台（QQ 群组、私聊等）。
+GitPulse 是一个 AstrBot 插件，用于接收 GitHub 事件（push、issues、pull requests 等）并转发到聊天平台（QQ 群组、私聊等）。
 
 ## 功能特性
 
@@ -24,8 +24,8 @@ AstrBot 插件，用于接收 GitHub 事件（push、issues、pull requests 等�
 
 ```bash
 cd AstrBot/data/plugins
-git clone https://github.com/TatsukiMengChen/astrbot_plugin_github_webhook.git
-cd astrbot_plugin_github_webhook
+git clone https://github.com/xiaomizhoubaobei/astrbot_plugin_gitpulse.git
+cd astrbot_plugin_gitpulse
 pip install -r requirements.txt
 ```
 
@@ -33,7 +33,7 @@ pip install -r requirements.txt
 
 在 AstrBot WebUI 中配置插件，或编辑配置文件：
 
-`data/config/astrbot_plugin_github_webhook_config.json`
+`data/config/astrbot_plugin_gitpulse_config.json`
 
 ```json
 {
@@ -93,7 +93,7 @@ sudo systemctl restart astrbot
 ## 目录结构
 
 ```
-astrbot_plugin_github_webhook/
+astrbot_plugin_gitpulse/
 ├── src/                          # Python 源代码
 │   ├── core/                 # 核心管理
 │   ├── handlers/              # 事件处理

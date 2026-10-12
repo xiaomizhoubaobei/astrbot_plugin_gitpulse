@@ -103,7 +103,7 @@ curl -X POST http://localhost:8080/webhook \
 如果 Docker 端口映射为 `8080:8080`：
 
 ```json
-// 插件配置文件（data/config/astrbot_plugin_github_webhook_config.json）
+// 插件配置文件（data/config/astrbot_plugin_gitpulse_config.json）
 {
   "port": 8080,  // ← 这里配置容器端口（不是宿主机端口）
   "target_umo": "default:GroupMessage:群号",

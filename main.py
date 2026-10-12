@@ -1,4 +1,4 @@
-"""AstrBot GitHub Webhook Plugin - Entry point."""
+"""GitPulse plugin - entry point."""
 
 import sys
 from pathlib import Path
@@ -15,7 +15,7 @@ from src.core.plugin import GitHubWebhookPlugin  # noqa: E402
 @register(
     "astrbot_plugin_gitpulse",
     "TatsukiMengChen",
-    "GitHub Webhook 集成插件 - 接收 GitHub 事件并转发到聊天平台",
+    "GitPulse - 接收 GitHub 事件并转发到聊天平台",
     "0.0.1",
 )
 class PluginEntry(Star):

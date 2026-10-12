@@ -1,4 +1,4 @@
-"""GitHub Webhook Plugin."""
+"""GitPulse plugin."""
 
 from .core.plugin import GitHubWebhookPlugin
 

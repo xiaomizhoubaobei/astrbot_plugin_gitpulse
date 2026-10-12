@@ -132,7 +132,7 @@ AstrBot 配置系统支持以下类型：
 插件配置文件位于：
 
 ```
-data/config/astrbot_plugin_github_webhook_config.json
+data/config/astrbot_plugin_gitpulse_config.json
 ```
 
 配置在 WebUI 修改后会自动保存到此文件。

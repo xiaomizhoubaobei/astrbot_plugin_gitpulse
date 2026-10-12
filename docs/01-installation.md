@@ -1,6 +1,6 @@
 # 安装指南
 
-本文档介绍如何安装和配置 AstrBot GitHub Webhook Plugin。
+本文档介绍如何安装和配置 GitPulse。
 
 ## 前置要求
 
@@ -14,13 +14,13 @@
 
 ```bash
 cd AstrBot/data/plugins
-git clone https://github.com/TatsukiMengChen/astrbot_plugin_github_webhook.git
+git clone https://github.com/xiaomizhoubaobei/astrbot_plugin_gitpulse.git
 ```
 
 ### 2. 安装依赖
 
 ```bash
-cd astrbot_plugin_github_webhook
+cd astrbot_plugin_gitpulse
 pip install -r requirements.txt
 ```
 
@@ -34,7 +34,7 @@ uv pip install -r requirements.txt
 
 在 AstrBot WebUI 中配置插件，或编辑配置文件：
 
-`data/config/astrbot_plugin_github_webhook_config.json`
+`data/config/astrbot_plugin_gitpulse_config.json`
 
 ```json
 {

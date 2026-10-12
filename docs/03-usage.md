@@ -44,7 +44,7 @@
 
 ```
 📦 新代码推送
-TatsukiMengChen 向 astrbot_plugin_github_webhook 推送了代码
+TatsukiMengChen 向 astrbot_plugin_gitpulse 推送了代码
 
 💬 修复 webhook 消息发送问题
 🌿 分支：main

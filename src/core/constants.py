@@ -1,4 +1,4 @@
-"""GitHub Webhook Plugin constants."""
+"""GitPulse plugin constants."""
 
 # Default port for webhook server
 DEFAULT_PORT = 8080

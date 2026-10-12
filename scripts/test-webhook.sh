@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# GitHub Webhook Plugin - 集成测试脚本
+# GitPulse - 集成测试脚本
 # 用法: ./test-webhook.sh [选项] <事件类型>
 
 set -e

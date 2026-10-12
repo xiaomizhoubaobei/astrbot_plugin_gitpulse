@@ -5,7 +5,7 @@
 ## 目录结构
 
 ```
-astrbot_plugin_github_webhook/
+astrbot_plugin_gitpulse/
 ├── src/                          # Python 源代码目录
 │   ├── core/                 # 核心管理层
 │   │   ├── __init__.py

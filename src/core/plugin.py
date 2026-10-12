@@ -1,4 +1,4 @@
-"""GitHub Webhook Plugin core implementation."""
+"""GitPulse plugin core implementation."""
 
 import json
 

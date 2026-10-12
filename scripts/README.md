@@ -1,6 +1,6 @@
 # GitHub Webhook 测试工具
 
-这个目录包含用于测试 GitHub Webhook 插件的脚本。
+这个目录包含用于测试 GitPulse 插件的脚本。
 
 ## test-webhook.sh
 
