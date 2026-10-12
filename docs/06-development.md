@@ -31,7 +31,7 @@
 4. 推送到分支 (`git push origin feature/AmazingFeature`)
 5. 在 GitHub / CNB 上提交 Pull Request
 
-> ⚠️ **强制要求：所有提交必须包含有效的 GPG 签名**  
+> ⚠️ **强制要求：所有提交必须包含有效的 GPG 签名**
 > 本仓库已开启强制提交签名校验（未签名的提交将被拒绝推送或合入）。请在提交前配置好你的 GPG 密钥，详情请参考 [GPG 提交签名与防伪验证指南](GPG_VERIFICATION.md#%EF%B8%8F-贡献者指南如何开启你自己的-gpg-签名)。
 
 ### 代码规范

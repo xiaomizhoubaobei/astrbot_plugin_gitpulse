@@ -164,7 +164,7 @@ gpg --list-keys --keyid-format LONG
 ## ❓ 常见验证提示与排错 FAQ
 
 ### Q1: 提示 `WARNING: This key is not certified with a trusted signature!` 是什么意思？
-**A:** 这不是报错，密码学签名已验证成功。  
+**A:** 这不是报错，密码学签名已验证成功。
 该提示仅代表该密钥尚未被你本地信任数据库显式标为绝对信任。若需消除该警告：
 ```bash
 gpg --edit-key 30F91E90F3919CD6A2F07EF3A342B6848AAE8FAD
