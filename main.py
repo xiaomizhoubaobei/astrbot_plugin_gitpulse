@@ -13,10 +13,10 @@ from src.core.plugin import GitHubWebhookPlugin  # noqa: E402
 
 
 @register(
-    "astrbot_plugin_github_webhook",
+    "astrbot_plugin_gitpulse",
     "TatsukiMengChen",
     "GitHub Webhook 集成插件 - 接收 GitHub 事件并转发到聊天平台",
-    "0.4.0",
+    "0.0.1",
 )
 class PluginEntry(Star):
     """插件入口类，代理到实际的 GitHubWebhookPlugin 类."""
