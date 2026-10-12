@@ -1,0 +1,50 @@
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v6.0.0
+  hooks:
+  - id: end-of-file-fixer
+  - id: trailing-whitespace
+  - id: check-yaml
+  - id: check-json
+  - id: check-toml
+  - id: check-added-large-files
+    args: ['--maxkb=10000']
+  - id: detect-private-key
+  - id: check-case-conflict
+  - id: check-merge-conflict
+  - id: check-symlinks
+  - id: mixed-line-ending
+    args: ['--fix=lf']
+- repo: https://github.com/psf/black-pre-commit-mirror
+  rev: 26.10.0
+  hooks:
+  - id: black
+    # 不绑定 language_version：仅要求本机具备任意受支持的 Python，跨版本可跑通
+    args: ['--target-version', 'py312']
+- repo: https://github.com/pycqa/flake8
+  rev: 7.4.1
+  hooks:
+  - id: flake8
+    args: ['--max-line-length=100', '--extend-ignore=E203,W503']
+- repo: https://github.com/pycqa/isort
+  rev: 9.0.2
+  hooks:
+  - id: isort
+    args: ['--profile', 'black']
+- repo: https://github.com/pre-commit/mirrors-mypy
+  rev: v2.4.0
+  hooks:
+  - id: mypy
+    additional_dependencies: [types-aiofiles]
+    # ai-audit/ 是 AI 审计示例的「部署源目录」：目录名带连字符，只有被复制并重命名为
+    # ai_audit（下划线）后才成为合法 Python 包。带连字符的目录会被 mypy 判为
+    # 「含 __init__.py 但包名非法」，故按目录排除，不参与类型检查。
+    exclude: '^ai-audit/'
+    args: ['--ignore-missing-imports']
+- repo: https://github.com/pycqa/pydocstyle
+  rev: 6.3.0
+  hooks:
+  - id: pydocstyle
+    args: ['--convention=google']
+    # 与 mypy 口径一致：ai-audit/ 下的 .py 为框架侧说明性模块，不纳入本仓库门禁。
+    exclude: '^ai-audit/'

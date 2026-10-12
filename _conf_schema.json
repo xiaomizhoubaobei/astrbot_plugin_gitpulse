@@ -1,0 +1,62 @@
+{
+  "port": {
+    "description": "Webhook 服务器端口",
+    "type": "int",
+    "default": 8080,
+    "hint": "接收 GitHub webhook 请求的端口号，确保防火墙允许该端口"
+  },
+  "target_umo": {
+    "description": "目标 UMO",
+    "type": "string",
+    "default": "",
+    "obvious_hint": true,
+    "hint": "接收 GitHub 事件消息的群组或用户 UMO（用户/群组唯一标识符）。在消息事件中可以通过 event.session_id 获取。所有 GitHub 事件都会发送到此目标。"
+  },
+  "webhook_secret": {
+    "description": "Webhook Secret（可选）",
+    "type": "string",
+    "default": "",
+    "hint": "GitHub Webhook Secret 密钥，用于验证请求来源。在 GitHub 仓库的 Webhook 设置中可以获取。留空则不验证签名。"
+  },
+  "rate_limit": {
+    "description": "请求速率限制",
+    "type": "int",
+    "slider": {
+      "min": 0,
+      "max": 60,
+      "step": 1
+    },
+    "default": 10,
+    "hint": "每分钟允许的最大请求数。设置为 0 表示不限制。"
+  },
+  "enable_agent": {
+    "description": "启用 LLM 生成消息",
+    "type": "bool",
+    "default": false,
+    "hint": "是否使用 LLM 生成个性化的 GitHub 事件消息。启用后，LLM 会根据 GitHub 事件内容生成消息"
+  },
+  "llm_provider_id": {
+    "description": "LLM 提供商",
+    "type": "string",
+    "default": "",
+    "hint": "使用的 LLM 提供商，必须在 AstrBot 中已配置。留空则使用默认提供商。",
+    "_special": "select_provider"
+  },
+  "agent_timeout": {
+    "description": "LLM 超时时间（秒）",
+    "type": "int",
+    "slider": {
+      "min": 30,
+      "max": 120,
+      "step": 1
+    },
+    "default": 60,
+    "hint": "LLM 处理的超时时间，单位为秒。建议设置为 30-60 秒。"
+  },
+  "agent_system_prompt": {
+    "description": "LLM 自定义系统提示词",
+    "type": "text",
+    "default": "",
+    "hint": "为 LLM 添加自定义的系统提示词，可以定义消息的风格、语气等。留空则使用默认提示词。"
+  }
+}
