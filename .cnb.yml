@@ -50,3 +50,23 @@ $:
                   - cp -r /tmp/astrbot-tmp/astrbot /workspace
                   - rm -rf /tmp/astrbot-tmp
                   - git clone https://github.com/AstrBotDevs/AstrBot.git
+
+main:
+      # 同步本仓库代码到 GitHub 镜像仓库（xiaomizhoubaobei/astrbot_plugin_gitpulse）。
+      # 说明：Github.yml 密钥仓库提供 GIT_USERNAME / GIT_ACCESS_TOKEN / GIT_EMAIL。
+      push:
+        - services:
+            - docker
+          imports:
+            - https://cnb.cool/XMZZUZHI/key/-/blob/main/Github.yml
+          stages:
+            - name: 同步到GitHub
+              image: tencentcom/git-sync
+              settings:
+                target_url: https://github.com/xiaomizhoubaobei/astrbot_plugin_gitpulse.git
+                auth_type: https
+                username: ${GIT_USERNAME}
+                password: ${GIT_ACCESS_TOKEN}
+                branch: main
+                git_user: ${GIT_USERNAME}
+                git_email: ${GIT_EMAIL}
