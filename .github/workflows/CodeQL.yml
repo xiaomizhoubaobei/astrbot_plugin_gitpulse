@@ -13,9 +13,11 @@ on:
     - cron: '0 0 * * 0'
   workflow_dispatch:
 
+# 最小权限：本工作流不上传 OIDC（无 sigstore / attestation 步骤），
+# 且同时被 pull_request 触发，故**不得**授予 id-token: write ——
+# 否则 PR 侧不可信代码可凭 id-token 铸造 OIDC 令牌并换取外部信任策略的凭据。
 permissions:
   contents: read
-  id-token: write
   actions: read
 
 jobs:
@@ -26,7 +28,6 @@ jobs:
       actions: read
       contents: read
       security-events: write
-      id-token: write
 
     strategy:
       fail-fast: false
