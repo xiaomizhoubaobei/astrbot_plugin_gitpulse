@@ -254,6 +254,9 @@ hatch run main -t ai_audit.alert_triage_example \
 > 否则 `publish` job 会失败（可把 `publish` job 整体注释掉，降级为只产出审计结论）。
 > 🔒 `GH_PAT` 只在 `publish` job 的建 Issue 步骤注入；`triage` job 全程不接触它，
 > 因此即便审计对象被污染，也无凭据可被滥用。
+> 🔒 `GH_PAT` **无需** `security_events` 读权限：读取 CodeQL 告警由 `triage` job 的
+> 只读 `GITHUB_TOKEN`（`security-events: read`）完成，`GH_PAT` 仅用于 `publish` job
+> 调用 Issue 与 security-advisory API，从而保持最小权限边界。
 
 > 首次使用建议先 `workflow_dispatch` 手动跑一次，确认链路正常后再依赖自动触发。
 

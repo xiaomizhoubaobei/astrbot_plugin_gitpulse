@@ -37,9 +37,11 @@
 #   - AI_MODEL_NAME   必填，实际调用的模型名（如 deepseek-v4-flash / qwen-max / kimi-k2 等）。
 #                     框架经环境变量 COPILOT_DEFAULT_MODEL 读取（见 model_config.yaml），
 #                     工作流运行时将本 Secret 透传过去，从而免改代码即可切换模型。
-#   - GH_PAT          必填，GitHub PAT，需同时含以下权限：
-#                     · security_events 读权限 —— 读取本仓库 CodeQL 告警
-#                     · repo / issues 写权限   —— 创建公开跟踪 Issue 与私密安全公告
+#   - GH_PAT          必填，GitHub PAT，仅需 repo / issues 写权限 —— 用于在 publish
+#                     job 创建公开跟踪 Issue 与私密安全公告（调用 Issue 与
+#                     security-advisory API）。
+#                     ⚠️ 无需 security_events 读权限：读取本仓库 CodeQL 告警由 triage
+#                     job 的只读 GITHUB_TOKEN（security-events: read）完成，与 GH_PAT 无关。
 #                     ⚠️ 仅注入 publish job（见下），triage job 绝不接触该 Secret。
 #   - MCP_CONFIG      可选，MCP Server（GitHub API）配置
 #
