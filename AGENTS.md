@@ -1074,6 +1074,7 @@ pre-commit run --all-files
 | Workflow | 作用 |
 | --- | --- |
 | `CodeQL.yml` | 代码安全分析 |
+| `ai-audit-scheduled.yml` | CodeQL 完成后自动做 AI 告警分流（见下方 §11.8.1） |
 | `security-scan.yml` / `DevSkim.yml` / `secret-scanning.yml` | 安全与密钥扫描 |
 | `PythonDependencyAudit.yml` / `dependency-review.yml` | 依赖审计与依赖变更审查 |
 | `tfsec.yml` | IaC 安全扫描 |
@@ -1081,40 +1082,100 @@ pre-commit run --all-files
 | `inclusiveness-analyzer.yml` | 包容性分析 |
 | `stale.yml` | 陈旧 Issue / PR 自动化 |
 | `release.yml` | 发布流程 |
-| `coverage.yml` | 单元测试覆盖率统计并上报 Codecov（`main` push / PR） |
+| `coverage.yml` | 单元测试覆盖率统计并上报 Codecov（`main` push / PR，见下方 §11.8.3） |
+
+> ⚠️ **本表须与 `ls .github/workflows/` 的实际结果保持一致**：上述工作流均已随
+> 「迁移 `.github` 目录并适配本仓库」落地（自生图插件模板同步而来，并按本仓库的
+> `src/` 源码布局与安全基线逐项适配）。新增 / 删除工作流时，请同步更新本表，
+> 避免文档与目录再次漂移。
 
 `.cnb.yml`：CNB 流水线在 `main` 分支 push 时同步代码到 GitHub 上游仓库。
 
 > **OSSAR 工作流已移除（`ossar.yml`）**：上游 `github/ossar-action` 停更在 v2.0.0（2024-04），
 > 其 `action.yml` 固定为 `node20`、内置 `@actions/core@1.2.6` 仍使用已废弃的 `set-output` 命令，
 > 因此持续产生「Node.js 20 弃用」与「`set-output` 弃用」两条告警，且**上游无 Node 24 版本可升**。
-> 其能力（静态安全分析）已由 `CodeQL.yml`（Python 语义级分析，主运行器矩阵覆盖三平台三版本）、
-> `DevSkim.yml`（多版本源码模式扫描）与 `security-scan.yml`（Bandit）完整覆盖，
+> 其能力（静态安全分析）现由 `CodeQL.yml`（Python 语义级分析，主运行器矩阵覆盖三平台三版本）
+> 与 `ai-audit-scheduled.yml`（消费 CodeQL 告警做 AI 自动分流）承接，
 > 故直接移除该工作流以根治告警，避免为消警而长期背负一个无人维护的 Action。
 
-#### 11.8.1 覆盖率链路（Codecov 单一来源）
+#### 11.8.1 AI 审计工作流（`ai-audit-scheduled.yml`）
 
-覆盖率上报**只有一条链路**：GitHub 侧的 `.github/workflows/coverage.yml` + `codecov.yml`，在 GitHub `push`(main) / `pull_request` 时产出 `coverage.xml` 并上报 Codecov，徽章展示在 README 顶部。
+本仓库真正的安全自动化核心是 `ai-audit-scheduled.yml`：在 `CodeQL.yml`（name: 「代码质量分析」）
+完成后，用 `workflow_run` 触发，对 CodeQL 告警做 AI 自动分流。
 
-> **CNB 侧（`.cnb.yml`）原有的「覆盖率测试 + `testing:coverage`」作业已移除**，CNB 平台不再产出覆盖率徽章，`.cnb.yml` 仅保留「同步到 GitHub」作业。新增/修改覆盖率链路时**不要**再往 CNB 侧加回上报，统一走 Codecov。
+> ⚠️ **审计范围（勿误读为「仅本次运行」）**：该工作流拉取的是**仓库中所有仍处于 open 状态的
+> CodeQL 告警**（`state=open&tool_name=CodeQL`，逐页取全），**并非**仅与触发它的那次 CodeQL 运行
+> 相关联的告警。因此当仓库里还残留更早扫描产生的 open 告警时，本次审计同样会把它们一并纳入分流。
+> `CodeQL.yml` 的完成事件只决定**何时触发**，不限定**审哪些**告警。
 
-**GitHub 侧关键约定（改动前务必先读这条，否则徽章会显示 unknown）：**
+该工作流采用**令牌与不可信源码物理隔离**的两段式设计（详细安全模型见工作流头部注释，勿削弱）：
 
-- 覆盖率必须用**包名**计数：`python -m coverage run --source=astrbot_plugin_models_ai -m pytest tests -q`。
-  - 仓库目录名不等于包名，靠 `ln -sfn "$GITHUB_WORKSPACE" "$RUNNER_TEMP/astrbot_plugin_models_ai"` 铺出可导入的包视图（与 `tests/_coverage_support.py` 的垫片同源）。
-  - **不要**改用「绝对路径 `--source=/workspace`」的写法：Codecov 侧用绝对路径会写出 `/home/runner/work/...`，固定路径映射后匹配不到文件，覆盖率恒为 0。
-- 报告格式固定为 `coverage.xml`（`coverage xml`），`codecov.yml` 中的 `flags.unittests.paths` 与之一致。
-- **`CODECOV_TOKEN` 只能来自密钥注入**：读取仓库 Secret `secrets.CODECOV_TOKEN`。**严禁**写进代码、`.cnb.yml`、文档或评论。
-- 未配置 token 时上报步骤 `continue-on-error` 跳过，CI **不失败**（仅留存 `coverage-xml` 工件），属预期行为。
-- **令牌口径以 Codecov 官方规则为准，本仓库固定「显式携带 `secrets.CODECOV_TOKEN`」**（依据 Codecov 官方 *When do I need a token?* 一节）：
-  - **私有仓库**：**所有**上传都必须携带令牌。
-  - **公开仓库**：仅当「上传针对**受保护分支**（如 `main`）的提交」且「仓库所有者**未**关闭公开仓库的令牌校验」时才要求令牌；未被保护的提交（如 `pr300:main` 这类带前缀的分支）可免令牌。
-  - **本仓库的 GitHub 目标是公开仓库**（实测 `xiaomizhoubaobei/astrbot_plugin_models_ai` 的 API 返回 `private: false` / `visibility: public`；「私有」指的只是 CNB → GitHub 的**同步链路**，不是目标仓库属性，二者不要混为一谈）；而路线上的 `coverage.yml` 恰好在 `push: main` 这一**受保护分支**上上传，且我们**不打算**去 Codecov 后台关闭公开仓库令牌校验 → 走到「公开 + 受保护分支 + 未关闭校验」这一格，**依然必须带令牌**。
-  - 结论：无论仓库公开还是私有，本仓库都固定走「显式带 `secrets.CODECOV_TOKEN`」这条路径，**不要**改用免令牌上传，也不要因为目标是公开仓库就以为可以省掉 Secret。
-- Codecov 后台提示所提及的「无令牌上传」开关需 `codecov-action` **> v5.0** / `codecov-cli` **> v0.9** 才生效，且官方声明该路径共享全局限流、超限即上传失败且不贴状态，**不建议依赖**。本仓库固定走「显式带令牌」路径（`codecov-action@v5` + `env: CODECOV_TOKEN`）。
-- `codecov.yml` 的 `project` / `patch` 门禁目前均为 `informational: true`（只提示不卡 PR）；要收紧时改这两处，而不是在 CI 里加 `--fail-under`。
+- `triage` job：**无仓库写权限**，但**并非不接触任何凭据**。它在**可信 ref**（默认分支 / 手动触发的本次 ref）上检出源码、
+  产出结构化审计结论 artifact；`if` 门禁要求上游运行的 `head_repository` 属于本仓库，从源头掐断 fork 源码流入。
+  实际注入的凭据为：`AI_API_ENDPOINT` / `AI_API_TOKEN` / `AI_MODEL_NAME`（调用 LLM 做分流，**不具备任何仓库写能力**）、
+  只读的 `GITHUB_TOKEN`（读 CodeQL 告警）与可选的 `MCP_CONFIG`（MCP Server 配置）。**它绝不接触 `GH_PAT`。**
+  ⚠️ **唯一例外是 `MCP_CONFIG`**：它可能内嵌**由使用者自行提供**的 GitHub 凭据，其权限范围**不受本工作流约束**；
+  故「`triage` 无仓库写能力」**仅在 `MCP_CONFIG` 内嵌凭据被配为只读时成立**（不配则最稳妥）。
+- `publish` job：**唯一持 `GH_PAT` 的 job**，不检出 / 不执行任何不可信源码，只消费 artifact 里的结构化结论；
+  漏洞细节走私密 security advisory，公开 Issue 只留脱敏占位指纹。它**不注入** `AI_*` 凭据，实际只注入 `GH_PAT`。
 
-**完成 Codecov 接线后仍需人工做一步**：打开 <https://codecov.io> 用 GitHub 账号授权本仓库，先让 CI 成功上报一次，徽章才会从 unknown 变为真实百分比。
+**每个 job 实际注入的凭据（维护者扩展/评估边界时以此为准，勿再声称 `triage` 不含任何 Secret）：**
+
+| job | 注入的凭据 | 用途 | 仓库写能力 |
+| --- | --- | --- | --- |
+| `triage` | `AI_API_ENDPOINT`、`AI_API_TOKEN`、`AI_MODEL_NAME`、`GITHUB_TOKEN`（只读）、`MCP_CONFIG`（可选） | 调用 LLM 分流 + 读取 CodeQL 告警 | ❌ 无（仅 `security-events: read` / `contents: read`）<br>⚠️ **条件成立**：`MCP_CONFIG` 内嵌凭据须为只读，否则其写能力由使用者自行决定 |
+| `publish` | `GH_PAT` | 读 `security_events` + 写 `issues/repo`，创建 Issue / 私密公告 | ✅ 有 |
+
+> ⚠️ 边界澄清：**「无仓库写权限」≠「无凭据」**。`triage` 会执行 LLM 调用并持有 `AI_API_TOKEN`、只读 `GITHUB_TOKEN`
+> 与可选的 `MCP_CONFIG`，因此任何进入 `triage` 环境的代码**都可能接触这些凭据**；其安全前提是
+> 「**`AI_*` 与只读 `GITHUB_TOKEN` 不具备仓库写能力** + 仅在可信 ref 上检出源码 + **`MCP_CONFIG` 若启用，
+> 其内嵌 GitHub 凭据已自行配为只读**」，而非「没有 Secret」。`GH_PAT` 则仅注入 `publish`。
+> ⚠️ **勿把「无仓库写能力」当作对 `MCP_CONFIG` 的兜底**：`MCP_CONFIG` 内嵌凭据的权限范围**不受本工作流约束**，
+> 它既可能只读、也可能带写权限——本工作流的「无仓库写能力」结论**以「该凭据被配为只读」为附加前提**，
+> 而非无条件成立。维护者在评估暴露面时，必须把它单独计入。
+
+所需 Secrets（仓库 Settings → Secrets and variables → Actions）：`AI_API_ENDPOINT` / `AI_API_TOKEN` /
+`AI_MODEL_NAME`（AI 分流，**注入 triage**）与 `GH_PAT`（读 security_events + 写 issues/repo，**仅注入 publish**）；
+`MCP_CONFIG` 可选（注入 triage，**其内嵌 GitHub 凭据须自行配为只读**，否则请勿启用）。**所有令牌严禁写进代码、`.cnb.yml`、文档或评论。**
+
+#### 11.8.2 令牌安全通行原则（PR 受控代码不得接触 Secret）
+
+任何**会执行 PR（含 fork）受控代码**的工作流，都**严禁**在同一 runner / 同一 job 内暴露任何长期令牌
+（Codecov token、PAT、云凭证等）：
+
+- 上游 PR 可在测试中留下后台进程，等后续步骤注入 Secret 后读取其环境变量并外泄。
+- 由此可导致：伪造覆盖率上报、伪造审计结论、越权写仓库等。
+- 正解：① 对 PR **免令牌**上传（如公开仓库的非受保护分支上传）；② 或把**持令牌的上传限制在可信 push 事件**（如 `push: main`）；
+  ③ 或沿用 §11.8.1 的两段式隔离（令牌 job 与不可信源码物理分离）。
+
+本仓库 `ai-audit-scheduled.yml` 已按第 ③ 条落实；新增任何涉及令牌的工作流都必须先过这条原则。
+
+#### 11.8.3 覆盖率链路（Codecov 单一来源）
+
+覆盖率上报**只有一条链路**：GitHub 侧的 `.github/workflows/coverage.yml` + 仓库根 `codecov.yml`，
+在 GitHub `push`(main) / `pull_request` 时产出 `coverage.xml` 并上报 Codecov。
+
+> **CNB 侧（`.cnb.yml`）不做覆盖率上报**：CNB 只负责把代码同步到 GitHub 镜像仓库，
+> 覆盖率统一由 GitHub Actions 侧上报。改动覆盖率链路时**不要**往 CNB 侧加回上报。
+
+**本仓库关键约定（与生图插件模板不同，改动前务必先读）：**
+
+- 覆盖率用 `src` 作为计数源：`python -m coverage run --source=src -m pytest tests -q`。
+  - 本仓库是「插件根 `main.py` + `src/` 源码包」布局，业务逻辑全在 `src/`，故以 `src` 计数；
+    `main.py` 仅做注册转发，不纳入统计（否则会产生 `module-not-imported` 噪声）。
+  - `--source` 必须用**包/模块名**（此处为 `src`），coverage 才会写出相对的 `SF` 路径（如 `src/core/config.py`）；
+    若误用绝对路径，`SF` 会退化成 `/home/runner/work/...`，Codecov 路径映射后匹配不到文件，覆盖率恒为 0。
+- 报告格式固定为 `coverage.xml`（`coverage xml -o coverage.xml`），`codecov.yml` 的 `flags.unittests.paths`
+  必须与 `--source=src` 的计数口径一致，即**只列 `src/`**。
+  - ⚠️ **不要把 `main.py` 加进 `paths`**：`main.py` 仅做注册转发，已被 `--source=src` 排除在统计之外，
+    `coverage.xml` 的文件清单里不会出现它。把 `main.py` 写进 `paths` 只会凭空多出一个匹配不到任何
+    上报文件的条目；同理，也不要照搬上游模板里带 `main.py` 的旧写法。
+- **`CODECOV_TOKEN` 只能来自 GitHub Secrets 注入**（`secrets.CODECOV_TOKEN`），**严禁**写进代码、
+  `.cnb.yml`、文档或评论；未配置 token 时上报步骤 `continue-on-error` 跳过，CI 不失败（仅留存 `coverage-xml` 工件），属预期行为。
+- `codecov.yml` 的 `project` / `patch` 门禁目前均为 `informational: true`（只提示不卡 PR）；
+  要收紧时改这两处，而不是在 CI 里加 `--fail-under`。
+- **完成 Codecov 接线后仍需人工做一步**：用 GitHub 账号在 Codecov 授权本仓库并让 CI 成功上报一次，
+  徽章才会从 unknown 变为真实百分比。
 
 ---
 
@@ -1127,8 +1188,8 @@ pre-commit run --all-files
 5. **新增风格**：只改 `commands/style_prompts.json`，不写死代码。
 6. **提交前**：运行 `pre-commit run --all-files`，确认 black/flake8/mypy 通过。
 7. **提交信息**：使用 Conventional Commits 中文描述。
-8. **不要把密钥写进代码或文档**；API Key 与 `CODECOV_TOKEN` 一律通过配置 / 密钥注入。
-9. **改覆盖率链路**：覆盖率统一由 `.github/workflows/coverage.yml` 上报 Codecov，CNB 侧上报已移除；改动前先读 10.8.1，确认 `--source` 写法与报告格式未被破坏。
+8. **不要把密钥写进代码或文档**；Tokens（`GH_PAT` / `CODECOV_TOKEN` 等）一律通过 GitHub Secrets / 密钥仓库注入。
+9. **令牌与 PR 受控代码隔离**：任何会执行 PR 代码的工作流，严禁在同一 runner/job 暴露长期令牌；新建工作流前必读 §11.8.2，涉及 AI 审计改 §11.8.1。
 
 ---
 

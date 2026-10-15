@@ -2,8 +2,11 @@
 # AI 审计（AI 漏洞分流）— CodeQL 完成后自动运行
 # =============================================================================
 # 用途：在 CodeQL 工作流（.github/workflows/CodeQL.yml）完成后自动运行
-#       ai-audit/alert_triage_example.yaml，消费本仓库 CodeQL 扫描产生的最
-#       新安全告警，做 AI 自动分流。
+#       ai-audit/alert_triage_example.yaml，对 CodeQL 安全告警做 AI 自动分流。
+# ⚠️ 审计范围：taskflow 第 0 步以 state=open&tool_name=CodeQL 逐页拉取的是
+#    **仓库中所有仍处于 open 状态的 CodeQL 告警**，而非仅与触发本工作流的那次
+#    CodeQL 运行相关联的告警。CodeQL 的完成事件只决定**何时触发**，不限定
+#    **审哪些**告警；仓库里残留的更早 open 告警同样会被本次审计纳入分流。
 #
 # ── 安全模型（本工作流的核心设计，勿削弱） ──────────────────────────────────
 # 威胁：workflow_run 会为 **PR（含 fork）触发的 CodeQL 运行** 也开火，而 PR 源码
@@ -13,10 +16,12 @@
 #
 # 对策：把流程劈成两段，中间只以 artifact（纯数据）传信，令牌与不可信源码
 #       物理隔离：
-#       ┌─ triage  job（无任何 Secret / 无写权限）──────────────────────────┐
+#       ┌─ triage  job（无仓库写权限；注入 AI_* 与只读 GITHUB_TOKEN）───────┐
 #       │  仅在**可信 ref**（默认分支或手动触发的本次 ref）上检出源码；      │
 #       │  只给 content-free 的只读审计能力；产出结构化审计结论 artifact。   │
 #       └──────────────────────────────────────────────────────────────────┘
+#       ⚠️ 关于 triage 的写能力边界：其注入的 AI_* 与只读 GITHUB_TOKEN 均无仓库写能力，
+#          但可选的 MCP_CONFIG 内嵌凭据权限**不受本工作流约束**，须自行配为只读（详见下方）。
 #                              ↓ audit-verdicts.json（数据）
 #       ┌─ publish job（唯一持 GH_PAT 的 job）──────────────────────────────┐
 #       │  不检出/不执行任何不可信源码；只消费 artifact 里的结构化结论。     │
@@ -47,7 +52,9 @@
 #                        返回 403/404，publish job 会跳过该条告警——既不建公开 Issue，也不建
 #                        公告。故必须单独授予，勿漏配。）
 #                     ⚠️ 仅注入 publish job（见下），triage job 绝不接触该 Secret。
-#   - MCP_CONFIG      可选，MCP Server（GitHub API）配置
+#   - MCP_CONFIG      可选，MCP Server（GitHub API）配置。
+#                     ⚠️ 可能内嵌你自行提供的 GitHub 凭据，其权限范围不受本工作流约束；
+#                     若启用请务必配成**只读**，否则 triage job 不再满足「无仓库写能力」。
 #
 # ⚠️ 注意：
 #   - 首次使用前请先用 workflow_dispatch 手动跑一次，确认链路正常。
@@ -95,12 +102,19 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Job 1：审计（无 Secret、无写权限、不接触 GH_PAT）
+  # Job 1：审计（无仓库写权限；注入 AI_* + 只读 GITHUB_TOKEN，不接触 GH_PAT）
   # ---------------------------------------------------------------------------
   # 这是「不可信输入」与「高权限动作」之间的隔离墙：本 job 只做只读分析，
-  # 产出结构化结论 artifact；它**永远不持有**任何可写仓库的凭据。
+  # 产出结构化结论 artifact；**在本工作流自身的配置范围内**不持有任何可写仓库的凭据。
+  # ⚠️ 注意边界：本 job 并非「无任何 Secret」——它注入 AI_API_ENDPOINT / AI_API_TOKEN /
+  #    AI_MODEL_NAME（调用 LLM 分流，不具备仓库写能力）、只读的 GITHUB_TOKEN（读 CodeQL 告警）
+  #    与可选的 MCP_CONFIG。仅 GH_PAT 被排除在本 job 之外（只在 publish job 注入）。
+  # ⚠️ MCP_CONFIG 是本 job「无仓库写能力」结论的唯一例外：它是一份 MCP Server 配置，其中
+  #    可能内嵌**由使用者自行提供**的 GitHub 凭据，其权限范围**不受本工作流约束**（工作流
+  #    既读不到、也管不了它）。因此上述结论**仅在把 MCP_CONFIG 内嵌凭据配为只读时成立**；
+  #    若为其配了写权限令牌，本 job 的写能力边界即被使用者自行放大，请自行承担该暴露面。
   triage:
-    name: 审计分流（无凭据）
+    name: 审计分流（无仓库写权限）
     runs-on: ubuntu-latest
     permissions:
       # 只读：足够读取 CodeQL 告警与仓库内容；本 job 不持有任何仓库写凭据。
@@ -157,10 +171,13 @@ jobs:
       - name: 安装 hatch（锁定版本）
         run: pip install hatch==1.14.0 "virtualenv<21"
 
-      # 运行 AI 审计 taskflow（消费最新 CodeQL 告警），产出结构化结论 artifact。
+      # 运行 AI 审计 taskflow（消费仓库全部 open 的 CodeQL 告警，非仅本次运行的增量），
+      # 产出结构化结论 artifact。
       # ⚠️ 本 job 不注入 GH_PAT；读取 CodeQL 告警所需的只读令牌用 GITHUB_TOKEN
       #   （其权限已被顶层收紧到 contents: read，且上游 CodeQL 告警读取无需写权限）。
       #   AI_* 凭据仅用于调用 LLM，不具备任何仓库写能力。
+      # ⚠️ MCP_CONFIG 可选：其内嵌 GitHub 凭据由使用者自行提供、权限范围不受本工作流约束，
+      #   本 job「无仓库写能力」的前提是该凭据已被配为只读（不配则最稳妥）。
       - name: 运行 AI 审计 taskflow（无仓库写凭据）
         working-directory: seclab-taskflow-agent
         env:
