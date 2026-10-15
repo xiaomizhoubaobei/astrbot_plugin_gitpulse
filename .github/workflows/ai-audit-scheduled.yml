@@ -267,9 +267,22 @@ jobs:
           # 是否存在「带该指纹」的 Issue：**须翻页遍历全部 open Issue**。
           # ⚠️ 只取 `?per_page=100` 首页会漏判：open Issue 超 100 条时，排在 100 名
           #    之后的既有 Issue 查不到 → 误判「不存在」→ 重复创建。这里逐页拉取直到取空。
+          # 去重检索的翻页硬上限（两个 find_* 共用）：
+          # 退出条件是「取到空页 / 不足一页」，完全依赖上游如实翻页。若上游异常地
+          # 持续返回整页（或 `page` 被忽略而恒返回首页），循环会一直翻下去，直到 job
+          # 撞上 Actions 超时被强杀，且期间持续打上游。设上限后，最坏情况变成**一次可
+          # 诊断的失败**，而不是静默拖死。10000 页 × 100 条 = 100 万条，远超真实规模。
+          MAX_DEDUPE_PAGES=10000
+
           find_issue_by_fingerprint() {
             local fp="$1" page=1 found=""
             while : ; do
+              # 翻页硬上限：失败返回 2（不可恢复）——去重判据不可信时必须让调用方停下，
+              # 否则会把「查不到」当成「不存在」而重复建 Issue。
+              if [ "$page" -gt "$MAX_DEDUPE_PAGES" ]; then
+                echo "open Issue 翻页超过硬上限 ${MAX_DEDUPE_PAGES} 页仍未取完，疑似上游异常，停止发布" >&2
+                return 2
+              fi
               local batch
               batch="$(curl -fsSL -H "${AUTH_HEADER}" -H "${ACCEPT_HEADER}" \
                 "${API}/repos/${REPO}/issues?state=open&per_page=100&page=${page}")" \
@@ -294,15 +307,40 @@ jobs:
           # ── 私密公告的去重判据：用 advisory 标题里的告警指纹 ──────────────────────
           # 公告标题固定为 `AI审计：CodeQL 告警 #<alert_number>`，先查是否已建同号公告，
           # 命中则跳过，避免同一条告警重复开公告（公告写接口非幂等）。
+          #
+          # 退出码契约（调用方据此区分两种结局）：
+          #   0 = 查询成功：stdout 为 ghsa_id（已存在）或空串（未找到，可安全新建公告）
+          #   1 = 查询失败（curl 失败 / 响应非 JSON 数组 / 超翻页上限，如 PAT 缺公告读权限）：
+          #       stdout 为**诊断文本**（非 ghsa_id），调用方必须**先赋值、再按退出码分流**
+          #       （`if X="$(fn)"` 会因条件上下文关闭 `errexit` 而把诊断当成 ID 用）。
+          # ⚠️ 失败必须与「查不到」区分开：前者说明去重判据不可信，绝不能吞成空串
+          #    （那会对同一条告警重复创建公告，公告写接口非幂等）。
+          # ⚠️ 但失败也**不得**让调用方终止整个 job：列公告失败只影响**本条**告警，
+          #    后续告警的去重判断与它无关。故本函数只**如实回报失败**，由调用方
+          #    决定「跳过该条、继续处理后续」（见调用处的处理约定）。
+          # 实现要点（`set -euo pipefail` 下的自保，缺一会逃逸成 job 级退出）：
+          #   ① 循环体末尾统一 `return 0`：所有能走到末尾的路径（取空页、取满页）都是
+          #      正常收尾，裸 `break`/落到函数尾会返回循环里最后一条命令的退出码，
+          #      反而把「查完了没找到」误报成失败；
+          #   ② 每处失败都 `return 1`：`return N`（N>0）本身是一条会「失败」的命令，
+          #      在 `set -e` 下若调用方用裸赋值 `X="$(fn)"` 会立刻终止 shell；
+          #      可恢复性由调用处用 `continue` 表达，与 find_issue_by_fingerprint 的
+          #      返回 2（不可恢复）刻意区分。
           find_advisory_by_alert() {
             local alert="$1" page=1 found=""
             while : ; do
+              # 翻页硬上限：与 find_issue_by_fingerprint 同源防护；此处返回 1
+              # （可恢复：只跳过该条告警），由调用方继续处理后续告警。
+              if [ "$page" -gt "$MAX_DEDUPE_PAGES" ]; then
+                echo "security advisory 翻页超过硬上限 ${MAX_DEDUPE_PAGES} 页仍未取完，疑似上游异常" >&2
+                return 1
+              fi
               local batch
               batch="$(curl -fsSL -H "${AUTH_HEADER}" -H "${ACCEPT_HEADER}" \
                 "${API}/repos/${REPO}/security-advisories?per_page=100&page=${page}")" \
-                || { echo "拉取 security advisory 第 ${page} 页失败" >&2; return 2; }
+                || { echo "拉取 security advisory 第 ${page} 页失败" >&2; return 1; }
               jq -e 'type == "array"' <<<"$batch" >/dev/null \
-                || { echo "security advisory 第 ${page} 页非 JSON 数组，拒绝继续" >&2; return 2; }
+                || { echo "security advisory 第 ${page} 页非 JSON 数组，拒绝继续" >&2; return 1; }
               local n
               n="$(jq 'length' <<<"$batch")"
               [ "$n" -eq 0 ] && break
@@ -313,6 +351,7 @@ jobs:
               [ "$n" -lt 100 ] && break
               page=$((page + 1))
             done
+            # 查完（空页 / 不足一页）仍未命中：成功返回空串，由调用方安全新建公告。
             return 0
           }
 
@@ -382,12 +421,41 @@ jobs:
               # 顺序很关键：先确保细节有私密落点，再建公开占位；否则一旦公告写入失败
               # 而公开 Issue 已建，就会出现「公开无细节、私密无记录」的悬空跟踪项。
               # ⚠️ 必须区分「查询成功但未找到」与「查询出错」：
-              #    前者返回空串（可安全新建公告），后者返回非 0（**必须停止发布**）。
+              #    前者返回空串（可安全新建公告），后者返回非 0（**必须跳过该条告警**）。
               #    若像以往那样用 `|| true` 把出错一并吞成空串，API 报错 / 响应校验失败
               #    会被误判为「未找到」→ 对同一条告警重复创建公告（公告写接口非幂等）。
-              if ! ADVISORY_ID="$(find_advisory_by_alert "$ALERT")"; then
-                echo "查询私密公告失败（告警 #${ALERT}），停止发布以避免重复创建" >&2
-                exit 1
+              # 为何这里「跳过该条」而非 `exit 1`：列公告失败（典型如 GH_PAT 缺
+              # `Repository security advisories` 读权限）只影响**本条**告警的公告去重；
+              # 在 `set -euo pipefail` 下让失败逃逸会直接终止整个 publish job，
+              # 导致后续告警既不建公告也不建 Issue。故交还控制权给逐条循环，
+              # 只跳过受影响的那条（详见 find_advisory_by_alert 的退出码契约）。
+              # 同理，下文的公告**创建**失败也必须接住：那是个含 `curl -f` 的管道赋值，
+              # 裸写在 `set -euo pipefail` 下同样会掀翻整个 job。
+              #
+              # 🔒 两处硬约束，改坏任一条都会让「权限缺失 = 整批告警白跑」复现：
+              #   ① **stdout 与退出码不可混用**：本函数的「诊断信息」是写进 stdout 的
+              #      （见函数内 `echo ...`），若用 `if ! ADVISORY_ID="$(fn)"` 取值，
+              #      `if` 条件上下文关闭 `errexit`，脚本会继续执行且 `ADVISORY_ID`
+              #      已被写入诊断文本 → 被当作「已有公告 ID」嵌进公开 Issue 正文。
+              #      故必须「先无条件赋值、再由退出码分流」（本处写法）。
+              #   ② 赋值右侧**禁止**加 `|| true`：它会吞掉退出码，使判定恒为「成功」、
+              #      查询失败被误判成「未找到」→ 重复创建公告（公告写接口非幂等）。
+              if ADVISORY_LOOKUP="$(find_advisory_by_alert "$ALERT")"; then
+                # ✅ 通道一（0 = 查询成功）：stdout 即判据——空串表示未找到，可安全新建公告。
+                ADVISORY_ID="$ADVISORY_LOOKUP"
+              else
+                # ❌ 通道二（非 0 = 查询失败）：stdout 此时已包含「第 N 页失败 / 非 JSON 数组 /
+                #    超翻页上限」等**由函数写入的 stdout 诊断**，绝不能误当成 ghsa_id 使用，
+                #    也不能被 `if X=...` 条件上下文（局部关闭 `set -e`）静默吞掉：
+                #    必须自己落日志 + 跳过该条告警，否则权限缺配会连一条诊断都不留。
+                # ⚠️ 为何不写成 `if ! ADVISORY_ID="$(fn)"`：`if` 条件位置会关闭 `errexit`，
+                #    查询失败时脚本**会继续执行**，而 `ADVISORY_ID` 已被那条失败命令写入
+                #    诊断文本 → 被当作「已存在的公告 ID」直接嵌进公开 Issue 正文。故必须用
+                #    「先赋值、再由退出码分流」这唯一正确的写法（stdout 与退出码不可混用）。
+                ADVISORY_DIAG="$ADVISORY_LOOKUP"
+                echo "无法列私密公告以做去重（告警 #${ALERT}），跳过该条（不建公告、不建公开 Issue）：${ADVISORY_DIAG}" >&2
+                SKIPPED=$((SKIPPED + 1))
+                continue
               fi
               if [ -z "$ADVISORY_ID" ]; then
                 # 说明：一次成型成 payload，**不要**先把 description 单独 jq 成字符串再
@@ -400,12 +468,24 @@ jobs:
                   '{summary:$summary,
                     description:("## 漏洞概述\n\n\($r)\n\n## 关联 CodeQL 告警\n\n- 告警编号：\($a)\n- 规则：\($ru)\n- 文件：\($p)\n\n## 处置约定\n\n- 本公告为 AI 审计自动创建的**私密**安全公告，仅维护者可见，用于在协调披露期内跟踪未修复漏洞。\n- 修复发布后，请按 SECURITY.md 的协调披露约定致谢并公开必要信息。"),
                     severity:"medium", vulnerabilities:[]}')"
-                ADVISORY_ID="$(curl -fsSL -X POST -H "${AUTH_HEADER}" \
+                # ⚠️ 判据必须是**退出码**，不能只判「结果为空」：
+                #    公告被拒（403/404，如 GH_PAT 缺公告写权限）时 `curl -f` 退出非 0，
+                #    但响应体里常带 JSON（如 `{"message":"Not Found"}`），经 `jq -r '.ghsa_id // ""'`
+                #    会得到空串、退出码却是 0。若只判空串，`set -euo pipefail` 会在管道
+                #    失败处直接掀翻整个 job（`pipefail` 让管道退出码非 0），后续告警全不被处理。
+                #    `if ! X="$(... | jq ...)"` 把管道放进条件上下文，失败不触发 `errexit`，
+                #    由下面的跳过分支消化——这才是「公告创建失败 → 跳过该条、继续下一条」。
+                if ! ADVISORY_ID="$(curl -fsSL -X POST -H "${AUTH_HEADER}" \
                   -H "${ACCEPT_HEADER}" \
                   "${API}/repos/${REPO}/security-advisories" \
-                  -d "$ADVISORY_PAYLOAD" | jq -r '.ghsa_id // ""')"
+                  -d "$ADVISORY_PAYLOAD" | jq -r '.ghsa_id // ""')"; then
+                  echo "私密公告创建失败（请求被拒或响应不可解析），跳过该告警（不建公开 Issue）：#${ALERT}" >&2
+                  SKIPPED=$((SKIPPED + 1))
+                  continue
+                fi
+                # 补一道空值兜底：请求成功但响应里没有 ghsa_id（异常响应），同样不能建公开 Issue。
                 if [ -z "$ADVISORY_ID" ] || [ "$ADVISORY_ID" = "null" ]; then
-                  echo "私密公告创建失败，跳过该告警（不建公开 Issue）：#${ALERT}" >&2
+                  echo "私密公告创建返回了空 ghsa_id，跳过该告警（不建公开 Issue）：#${ALERT}" >&2
                   SKIPPED=$((SKIPPED + 1))
                   continue
                 fi

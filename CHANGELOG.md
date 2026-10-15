@@ -11,6 +11,14 @@
 - CI 同步到 GitHub 镜像仓库时开启强制推送（`.cnb.yml` 的 `git-sync` 步骤新增 `force: true`）
   - 即使 CNB 与镜像仓库历史分叉，也能以 CNB 侧为准强制覆盖，避免同步失败或半同步状态
 
+### 修复
+- AI 审计示例（`.github/workflows/ai-audit-scheduled.yml`）：公告接口失败不再拖垮整批告警处理
+  - `GH_PAT` 缺 `Repository security advisories` 权限时，列公告/建公告的失败不再被
+    `set -euo pipefail` 放大成 job 级退出，改为**跳过该条、继续处理后续告警**，并在结尾汇总计入「跳过 N 条」
+  - 列公告失败改「先赋值、由退出码分流」，避免 `if` 条件上下文吞掉失败后把诊断文本当作公告 ID 写进公开 Issue
+  - 建公告失败改判退出码（403/404 时 `curl -f` 非 0 但响应体仍是 JSON，只判空串会被 `pipefail` 终止）
+  - 两个去重辅助函数新增翻页硬上限 `MAX_DEDUPE_PAGES`，防上游异常时无限翻页拖到 Actions 超时
+
 ## [0.0.1] - 2026-10-12
 
 ### 更改

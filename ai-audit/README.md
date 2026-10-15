@@ -107,7 +107,7 @@ ai-audit/
 | `seclab-taskflow-agent` 框架 | 需部署框架本体 | ❌ 需部署 |
 | LLM 模型（支持函数调用） | 任意 OpenAI 兼容上游：DeepSeek / 通义千问 / Moonshot / 本地 vLLM 等 | ❌ 需配置（`AI_API_ENDPOINT` + `AI_API_TOKEN`） |
 | GitHub PAT（读告警） | 审计侧只读拉取 CodeQL 告警用（`security_events` 读权限即可） | ❌ 需你提供 |
-| GitHub PAT（写 Issue + 私密公告） | 仅 `publish` job 创建真实 Issue 与私密安全公告用（`issues` 写 + `Repository security advisories` 写，二者**不通用**） | ❌ 需你提供 |
+| GitHub PAT（写 Issue + 私密公告） | 仅 `publish` job 创建真实 Issue 与私密安全公告用（`issues` 写 + `Repository security advisories` **读+写**，二者**不通用**；只缺后者时该条告警被跳过，见文末「逐条容错」） | ❌ 需你提供 |
 | MCP Server（GitHub API） | 框架可选的信息收集能力（只读） | ⭕ 可选 |
 
 ---
@@ -242,7 +242,7 @@ hatch run main -t ai_audit.alert_triage_example \
 | `AI_API_ENDPOINT` | ✅ | 上游 base_url（OpenAI 兼容口，如 `https://api.deepseek.com/v1`，或本地 vLLM / Ollama 的 OpenAI 兼容地址） |
 | `AI_API_TOKEN` | ✅ | 对应厂商的 API Key（需支持函数调用） |
 | `AI_MODEL_NAME` | ✅ | 实际调用的模型名（如 `deepseek-v4-flash` / `qwen-max` / `kimi-k2` 等）。工作流运行时将其透传给框架的 `COPILOT_DEFAULT_MODEL` 环境变量 |
-| `GH_PAT` | ✅ | GitHub PAT，需 `issues` 写权限（创建公开跟踪 Issue）**以及** `Repository security advisories` 写权限（创建私密安全公告，`POST /repos/{owner}/{repo}/security-advisories`）。两者**不通用**，缺后者会导致公告创建被拒、该告警被整体跳过。**仅注入 `publish` job**，`triage` job 绝不接触该 Secret |
+| `GH_PAT` | ✅ | GitHub PAT，需 `issues` 写权限（创建公开跟踪 Issue）**以及** `Repository security advisories` **读+写**权限（查询与创建私密安全公告，`GET`/`POST /repos/{owner}/{repo}/security-advisories`）。两者**不通用**，缺后者会导致公告查询/创建被拒，**该条告警被跳过**（不建公告也不建公开 Issue），其余告警继续正常处理。**仅注入 `publish` job**，`triage` job 绝不接触该 Secret |
 | `MCP_CONFIG` | 可选 | MCP Server（GitHub API）配置 |
 
 > 📌 框架只识别 `AI_API_ENDPOINT` / `AI_API_TOKEN`（即 `AsyncOpenAI(base_url=..., api_key=...)`），
@@ -251,11 +251,15 @@ hatch run main -t ai_audit.alert_triage_example \
 > `api_type: chat_completions`（OpenAI 兼容标准协议）。
 
 > ⚠️ 由于示例会为真实漏洞**创建公开 Issue 与私密安全公告**，`GH_PAT` 必须**同时**具有：
-> ① 仓库的 `issues` 写权限（建公开 Issue）；② 细粒度 PAT 的 **`Repository security advisories` 写权限**
-> （建私密公告，对应 `POST /repos/{owner}/{repo}/security-advisories`）。**这两项权限不通用**：
-> 仅授予 `issues` 写时，公告创建会返回 403/404，`publish` job 会**跳过该条告警**——结果是该告警
-> 既没有私密公告、也没有公开 Issue。缺任一权限时，可把 `publish` job 整体注释掉，
-> 降级为只产出审计结论。
+> ① 仓库的 `issues` 写权限（建公开 Issue）；② 细粒度 PAT 的 **`Repository security advisories` 读+写权限**
+> （**查询**与创建私密公告，对应 `GET`/`POST /repos/{owner}/{repo}/security-advisories`）。
+> ⚠️ **读权限与写权限必须一起给**：查询是逐条构建内容前的第一道去重，缺读权限时无法判断
+> 该告警是否已开过公告，只能按「宁可跳过、不可重复」处理。
+> **这两项权限不通用**：仅授予 `issues` 写时，列公告去重与创建公告都会返回 403/404。
+> 此时 `publish` job **不再整体失败**——受影响的**该条**告警被跳过（既无公告也无公开 Issue），
+> 控制权交还给逐条处理循环，后续告警继续走完「公告 → 公开 Issue」全流程；
+> 全部告警处理完后正常退出，并在结尾汇总里计入「跳过 N 条」。缺任一权限时，
+> 可把 `publish` job 整体注释掉，降级为只产出审计结论。
 > 🔒 `GH_PAT` 只在 `publish` job 的建 Issue 步骤注入；`triage` job 全程不接触它，
 > 因此即便审计对象被污染，也无凭据可被滥用。
 
@@ -326,6 +330,40 @@ hatch run main -t ai_audit.alert_triage_example \
   > 边界说明：本守卫只保证「进入公开渠道的编号一定是正整数」，**不**校验编号是否真实存在
   > （那是 GitHub API 的职责）；编号真实但不存在时，公开 Issue 仍会建出（占位跟踪），
   > 只是私密公告创建会失败并跳过——这属预期，不构成信息披露。
+- **单条告警失败不拖垮整批（逐条容错）**：`publish` 的逐条循环对**可恢复的单点失败**
+  一律 `continue` 跳过该条并计入 `SKIPPED`，而非让 `set -euo pipefail` 终止整个 job：
+  1. **列私密公告失败**（典型为 `GH_PAT` 缺 `Repository security advisories` 读权限，
+     或 API 临时 5xx）：此时无法判断该告警的公告是否已存在，**跳过该条**
+     （不建公告、也不建公开 Issue），控制权交还循环，后续告警继续正常处理；
+     > 🔧 实现要点（改动能被复现的坑）：`find_advisory_by_alert` 的「诊断信息」是写进
+     > **stdout** 的，故调用处**不能**写成 `if ! ADVISORY_ID="$(find_advisory_by_alert ...)"`——
+     > `if` 条件上下文会关闭 `errexit`，脚本在查询失败后**继续执行**，而 `ADVISORY_ID`
+     > 已被那条失败命令写入诊断文本，会被当成「已存在的公告 ID」直接嵌进公开 Issue 正文
+     > （比 job 失败更糟：产出一条内容错误的公开 Issue）。正确写法是
+     > **「先无条件赋值、再由退出码分流」**（`if X="$(fn)"; then ... else 跳过 fi`）。
+     > 同理，赋值右侧**禁止**加 `|| true`：它会吞掉退出码，把「查询失败」抹成空串，
+     > 于是被误判为「未找到」→ 重复创建公告（公告写接口非幂等）。
+  2. **创建私密公告失败**（如只有 `issues` 写而无公告写权限）：同样跳过该条，
+     不会建出「公开无细节、私密无记录」的悬空跟踪项；
+     > 🔧 判据必须是**退出码**，不能只判「结果为空」：公告被拒（403/404）时 `curl -f`
+     > 退出非 0，但响应体常是 JSON（如 `{"message":"Not Found"}`），经 `jq -r '.ghsa_id // ""'`
+     > 会得到空串、退出码却是 0。若只看空串，`pipefail` 会让管道失败处直接终止整个 job，
+     > 后续告警全不被处理。故必须把管道放进 `if ! X="$(... | jq ...)"` 条件里判退出码，
+     > 失败走跳过分支；另外补一道「退出码 0 但 `ghsa_id` 为空/`null`」的兜底。
+  3. **`alert_number` 守卫拦截**：跳过该条，绝不降级发布受污染文本。
+  > 与之相对，**不可恢复 / 已产生副作用**的失败仍然 `exit 1` 让 job 失败、交维护者介入：
+  > 查既有 Issue 失败（无法判断是否已存在，贸然创建会造成重复）、
+  > 创建后自愈查询失败（Issue 已建出，必须人工核对是否留下重复）。
+  > 判据：**「这条失败了，下一条还能不能安全地独立判断」**——能，就跳过继续；不能，就停下。
+  4. **去重翻页超硬上限**（`MAX_DEDUPE_PAGES=10000` 页）：两个 `find_*` 辅助函数的退出
+     条件是「取到空页」，上游若异常地持续返回整页，会一直翻到 job 超时。加了上限后，
+     最坏情况变成**一次可诊断的失败/跳过**，而不是静默拖死到 Actions 超时强杀。
+     两条路径的处置不同（判据同「这条失败了，下一条还能不能安全地独立判断」）：
+     - **公告去重翻页超限** → 只影响本条告警 → 跳过该条、继续处理后续（返回 1）；
+     - **Issue 去重翻页超限** → 判据不可信、贸然创建会造成重复 → `exit 1` 停止发布（返回 2）。
+  > 📐 自检方式：从工作流中抽出 `publish` 的 `run` 脚本，用伪 `curl` 做行为仿真，覆盖
+  > 「正常 / 列公告 403 / 建公告 403 / 响应非数组 / 翻页无界」五种场景，断言**退出码为 0**
+  > 且**其余告警照常建公告 + 建 Issue**（受影响的只是被跳过的那几条）。
 
 ---
 
