@@ -45,12 +45,12 @@
 #   - GH_PAT          必填，GitHub PAT，需同时含以下权限：
 #                     · security_events 读权限 —— 读取本仓库 CodeQL 告警
 #                     · repo / issues 写权限   —— 创建公开跟踪 Issue
-#                     · Repository security advisories 写权限 —— 创建**私密安全公告**
-#                       （细粒度 PAT 里名为 "Repository security advisories"，权限项
-#                        标记为 write；对应 `POST /repos/{owner}/{repo}/security-advisories`。
-#                        ⚠️ 该权限与 `issues` 写**不通用**：仅给 `issues` 写会导致创建公告
-#                        返回 403/404，publish job 会跳过该条告警——既不建公开 Issue，也不建
-#                        公告。故必须单独授予，勿漏配。）
+#                     · Repository security advisories 读+写权限 —— 查询并创建**私密安全公告**
+#                       （细粒度 PAT 里名为 "Repository security advisories"，权限项标记为
+#                        read and write；对应 `GET`/`POST /repos/{owner}/{repo}/security-advisories`。
+#                        ⚠️ 该权限与 `issues` 写**不通用**：仅给 `issues` 写会导致列公告去重与
+#                        创建公告都返回 403/404，此时 publish job 会**跳过该条告警**（既不建公开
+#                        Issue，也不建公告），其余告警继续处理。故必须单独授予，勿漏配。）
 #                     ⚠️ 仅注入 publish job（见下），triage job 绝不接触该 Secret。
 #   - MCP_CONFIG      可选，MCP Server（GitHub API）配置。
 #                     ⚠️ 可能内嵌你自行提供的 GitHub 凭据，其权限范围不受本工作流约束；
@@ -311,6 +311,16 @@ jobs:
           # ── 私密公告的去重判据：用 advisory 标题里的告警指纹 ──────────────────────
           # 公告标题固定为 `AI审计：CodeQL 告警 #<alert_number>`，先查是否已建同号公告，
           # 命中则跳过，避免同一条告警重复开公告（公告写接口非幂等）。
+          #
+          # 退出码契约（调用方据此区分三种结局）：
+          #   0  = 查询成功：stdout 为 ghsa_id（已存在）或空串（未找到，可安全新建）
+          #   2  = 查询失败：curl 失败 / 响应非 JSON 数组（如 PAT 缺列公告权限）
+          # 与 find_issue_by_fingerprint 的区别：公告查询失败只返回 2 让调用方
+          # **跳过该条告警**，而不是让 job 退出——因为列公告失败不影响后续告警的去重判断，
+          # 若在此处整体退出，剩下的告警连「是否已存在」都不会被处理。
+          #
+          # ⚠️ 调用方仍必须区分「空串」与「非 0」：前者可安全新建，后者说明去重判据不可信，
+          #    绝不能把失败吞成空串（那会对同一条告警重复创建公告，公告写接口非幂等）。
           find_advisory_by_alert() {
             local alert="$1" page=1 found=""
             while : ; do
@@ -399,12 +409,20 @@ jobs:
               # 顺序很关键：先确保细节有私密落点，再建公开占位；否则一旦公告写入失败
               # 而公开 Issue 已建，就会出现「公开无细节、私密无记录」的悬空跟踪项。
               # ⚠️ 必须区分「查询成功但未找到」与「查询出错」：
-              #    前者返回空串（可安全新建公告），后者返回非 0（**必须停止发布**）。
+              #    前者返回空串（可安全新建公告），后者返回非 0（**必须跳过该条告警**）。
               #    若像以往那样用 `|| true` 把出错一并吞成空串，API 报错 / 响应校验失败
               #    会被误判为「未找到」→ 对同一条告警重复创建公告（公告写接口非幂等）。
+              # 为何这里 `continue` 而非 `exit 1`：列公告失败（典型如 GH_PAT 缺
+              # `Repository security advisories` 读权限）只影响**本条**告警的公告去重；
+              # 在 `set -euo pipefail` 下让失败逃逸会直接终止整个 publish job，
+              # 导致后续告警既不建公告也不建 Issue。故交还控制权给逐条循环，
+              # 只跳过受影响的那条（详见 find_advisory_by_alert 的退出码契约）。
+              # 同理，下文的公告**创建**失败也必须是 `if !` 条件赋值：那是个含
+              # `curl -f` 的管道赋值，裸写在 `set -euo pipefail` 下同样会掀翻整个 job。
               if ! ADVISORY_ID="$(find_advisory_by_alert "$ALERT")"; then
-                echo "查询私密公告失败（告警 #${ALERT}），停止发布以避免重复创建" >&2
-                exit 1
+                echo "无法列私密公告以做去重（告警 #${ALERT}），跳过该条（不建公告、不建公开 Issue）" >&2
+                SKIPPED=$((SKIPPED + 1))
+                continue
               fi
               if [ -z "$ADVISORY_ID" ]; then
                 # 说明：一次成型成 payload，**不要**先把 description 单独 jq 成字符串再
@@ -417,11 +435,14 @@ jobs:
                   '{summary:$summary,
                     description:("## 漏洞概述\n\n\($r)\n\n## 关联 CodeQL 告警\n\n- 告警编号：\($a)\n- 规则：\($ru)\n- 文件：\($p)\n\n## 处置约定\n\n- 本公告为 AI 审计自动创建的**私密**安全公告，仅维护者可见，用于在协调披露期内跟踪未修复漏洞。\n- 修复发布后，请按 SECURITY.md 的协调披露约定致谢并公开必要信息。"),
                     severity:"medium", vulnerabilities:[]}')"
-                ADVISORY_ID="$(curl -fsSL -X POST -H "${AUTH_HEADER}" \
+                # ⚠️ 必须放在 `if !` 条件里赋值：管道含 `curl -f`，一旦创建被拒
+                #    （如 GH_PAT 缺公告写权限返回 403/404），`set -euo pipefail` 会让
+                #    这个裸赋值直接终止整个 job，导致后续告警全部不被处理。放进条件
+                #    上下文后失败走下面的跳过分支，控制权交还逐条循环。
+                if ! ADVISORY_ID="$(curl -fsSL -X POST -H "${AUTH_HEADER}" \
                   -H "${ACCEPT_HEADER}" \
                   "${API}/repos/${REPO}/security-advisories" \
-                  -d "$ADVISORY_PAYLOAD" | jq -r '.ghsa_id // ""')"
-                if [ -z "$ADVISORY_ID" ] || [ "$ADVISORY_ID" = "null" ]; then
+                  -d "$ADVISORY_PAYLOAD" | jq -r '.ghsa_id // ""')"; then
                   echo "私密公告创建失败，跳过该告警（不建公开 Issue）：#${ALERT}" >&2
                   SKIPPED=$((SKIPPED + 1))
                   continue
