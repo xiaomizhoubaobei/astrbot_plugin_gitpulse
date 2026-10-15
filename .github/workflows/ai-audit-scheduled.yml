@@ -281,12 +281,28 @@ jobs:
           # 幂等指纹仍写在**公开 Issue**正文里（HTML 注释），保证去重逻辑不变。
           FINGERPRINT_PREFIX="<!-- ai-audit-alert:"
 
+          # 去重检索的翻页硬上限：两个 find_* 辅助函数共用。
+          # ⚠️ 这不是「防御性摆设」——去重循环的退出条件是「取到空页」或「不足一页」，
+          #    完全依赖上游如实翻页。若 API 被代理/网关异常接管、持续返回整页（或
+          #    `page` 参数被忽略而恒返回第一页），循环就会**永远翻下去**，
+          #    直到 job 撞上 Actions 超时（默认 360 分钟）被强杀，且期间持续打上游。
+          #    有了上限，最坏情况是**一次可诊断的失败**，而不是一次静默拖死的超时。
+          #    10000 页 × 100 条 = 100 万条，远超任何真实仓库的去重规模。
+          MAX_DEDUPE_PAGES=10000
+
           # 是否存在「带该指纹」的 Issue：**须翻页遍历全部 open Issue**。
           # ⚠️ 只取 `?per_page=100` 首页会漏判：open Issue 超 100 条时，排在 100 名
           #    之后的既有 Issue 查不到 → 误判「不存在」→ 重复创建。这里逐页拉取直到取空。
           find_issue_by_fingerprint() {
             local fp="$1" page=1 found=""
             while : ; do
+              # 翻页硬上限：防上游异常时无限翻页（详见 MAX_DEDUPE_PAGES 注释）。
+              # 此处失败返回 2（不可恢复）——去重判据不可信时**必须**让调用方停下，
+              # 否则会把「查不到」当成「不存在」而重复建 Issue。
+              if [ "$page" -gt "$MAX_DEDUPE_PAGES" ]; then
+                echo "open Issue 翻页超过硬上限 ${MAX_DEDUPE_PAGES} 页仍未取完，疑似上游异常，停止发布" >&2
+                return 2
+              fi
               local batch
               batch="$(curl -fsSL -H "${AUTH_HEADER}" -H "${ACCEPT_HEADER}" \
                 "${API}/repos/${REPO}/issues?state=open&per_page=100&page=${page}")" \
@@ -313,23 +329,42 @@ jobs:
           # 命中则跳过，避免同一条告警重复开公告（公告写接口非幂等）。
           #
           # 退出码契约（调用方据此区分三种结局）：
-          #   0  = 查询成功：stdout 为 ghsa_id（已存在）或空串（未找到，可安全新建）
-          #   2  = 查询失败：curl 失败 / 响应非 JSON 数组（如 PAT 缺列公告权限）
-          # 与 find_issue_by_fingerprint 的区别：公告查询失败只返回 2 让调用方
-          # **跳过该条告警**，而不是让 job 退出——因为列公告失败不影响后续告警的去重判断，
-          # 若在此处整体退出，剩下的告警连「是否已存在」都不会被处理。
+          #   0 = 查询成功，stdout 为 ghsa_id（已存在）或空串（未找到，可安全新建）
+          #   1 = 查询失败（curl 失败 / 响应非 JSON 数组，如 PAT 缺公告读权限）
+          # ⚠️ 失败必须与「查不到」区分开：前者说明去重判据不可信，绝不能吞成空串
+          #    （那会对同一条告警重复创建公告，公告写接口非幂等）。
+          # ⚠️ 但失败也**不得**让调用方终止整个 job：列公告失败只影响**本条**告警，
+          #    后续告警的去重判断与它无关。故本函数只**如实回报失败**，由调用方
+          #    决定「跳过该条、继续处理后续」（见调用处的处理约定）。
           #
-          # ⚠️ 调用方仍必须区分「空串」与「非 0」：前者可安全新建，后者说明去重判据不可信，
-          #    绝不能把失败吞成空串（那会对同一条告警重复创建公告，公告写接口非幂等）。
+          # 实现要点（`set -euo pipefail` 下的两层自保，缺一会逃逸成 job 级退出）：
+          #   ① 循环体末尾统一 `return 0`：所有能走到末尾的路径（取空页、取满页）都是
+          #      正常收尾，裸 `break`/落到函数尾会返回循环里最后一条命令的退出码，
+          #      反而把「查完了没找到」误报成失败；
+          #   ② 每处失败都 `return 1`（**不是** `return 2`）：`return N`（N>0）本身是
+          #      一条会「失败」的命令，在 `set -e` 下若调用方用裸赋值 `X="$(fn)"`，
+          #      会立刻终止 shell——而 `set -e` 对退出码 2 与 1 一视同仁，用 2 毫无
+          #      收益，只在语义上误导。故本函数失败一律返回 1，提示的强弱交给调用处；
+          #   ③ 翻页设硬上限（MAX_DEDUPE_PAGES）：退出条件依赖「取到空页」，上游若
+          #      异常地持续返回整页，循环会一直翻到 job 超时。
+          # ⚠️ 与 find_issue_by_fingerprint 的**唯一**语义差别：本函数失败返回 1
+          #    表示「可恢复」——调用方跳过该条告警继续；后者返回 2 表示「不可恢复」——
+          #    调用方必须停下，因为贸然建 Issue 会造成重复。
           find_advisory_by_alert() {
             local alert="$1" page=1 found=""
             while : ; do
+              # 翻页硬上限：与 find_issue_by_fingerprint 同源防护。此处失败返回 1
+              # （可恢复：只跳过该条告警），交给调用方继续处理后续告警。
+              if [ "$page" -gt "$MAX_DEDUPE_PAGES" ]; then
+                echo "security advisory 翻页超过硬上限 ${MAX_DEDUPE_PAGES} 页仍未取完，疑似上游异常" >&2
+                return 1
+              fi
               local batch
               batch="$(curl -fsSL -H "${AUTH_HEADER}" -H "${ACCEPT_HEADER}" \
                 "${API}/repos/${REPO}/security-advisories?per_page=100&page=${page}")" \
-                || { echo "拉取 security advisory 第 ${page} 页失败" >&2; return 2; }
+                || { echo "拉取 security advisory 第 ${page} 页失败" >&2; return 1; }
               jq -e 'type == "array"' <<<"$batch" >/dev/null \
-                || { echo "security advisory 第 ${page} 页非 JSON 数组，拒绝继续" >&2; return 2; }
+                || { echo "security advisory 第 ${page} 页非 JSON 数组，拒绝继续" >&2; return 1; }
               local n
               n="$(jq 'length' <<<"$batch")"
               [ "$n" -eq 0 ] && break
@@ -340,6 +375,7 @@ jobs:
               [ "$n" -lt 100 ] && break
               page=$((page + 1))
             done
+            # 查完了（空页或不足一页）仍未命中：成功返回空串，由调用方安全新建公告。
             return 0
           }
 
@@ -419,6 +455,18 @@ jobs:
               # 只跳过受影响的那条（详见 find_advisory_by_alert 的退出码契约）。
               # 同理，下文的公告**创建**失败也必须是 `if !` 条件赋值：那是个含
               # `curl -f` 的管道赋值，裸写在 `set -euo pipefail` 下同样会掀翻整个 job。
+              # 行为契约：查询失败一律**跳过该条**（不建公告、不建公开 Issue），
+              # 控制权交还逐条循环，剩余告警继续处理，job 最终正常退出。
+              #
+              # 🔒 三条硬约束，改坏任何一条都会让「权限缺失 = 整批告警白跑」复现：
+              #   ① 失败必须能被接住：取 `if !` 条件位置，失败时**不**触发 `set -e`；
+              #   ② 失败**不得**被吞成「查不到」：赋值右侧**不能**加 `|| true`——
+              #      它会吞掉退出码，使 `if !` 恒为假、`ADVISORY_ID` 恒为空，
+              #      于是把查询失败误判成「未找到」→ 重复创建公告（公告写接口非幂等）；
+              #   ③ 失败**不得**升级为 `return 2` 之外的整体退出：见上方函数退出码契约，
+              #      本函数失败一律 `return 1`，由本处 `continue` 消化。
+              #   注：曾试过 `if ! ADVISORY_ID="$(fn || true)"`，看似「双保险」，
+              #   实则被 `|| true` 抹平判定——失败悄悄降级成空串并继续建公告。
               if ! ADVISORY_ID="$(find_advisory_by_alert "$ALERT")"; then
                 echo "无法列私密公告以做去重（告警 #${ALERT}），跳过该条（不建公告、不建公开 Issue）" >&2
                 SKIPPED=$((SKIPPED + 1))

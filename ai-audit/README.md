@@ -115,7 +115,7 @@ ai-audit/
 | `seclab-taskflow-agent` 框架 | 需部署框架本体 | ❌ 需部署 |
 | LLM 模型（支持函数调用） | 任意 OpenAI 兼容上游：DeepSeek / 通义千问 / Moonshot / 本地 vLLM 等 | ❌ 需配置（`AI_API_ENDPOINT` + `AI_API_TOKEN`） |
 | GitHub PAT（读告警） | 审计侧只读拉取 CodeQL 告警用（`security_events` 读权限即可） | ❌ 需你提供 |
-| GitHub PAT（写 Issue + 私密公告） | 仅 `publish` job 创建真实 Issue 与私密安全公告用（`issues` 写 + `Repository security advisories` 读+写，二者**不通用**） | ❌ 需你提供 |
+| GitHub PAT（写 Issue + 私密公告） | 仅 `publish` job 创建真实 Issue 与私密安全公告用（`issues` 写 + `Repository security advisories` **读+写**，二者**不通用**；只缺后者时该条告警被跳过，见文末「逐条容错」） | ❌ 需你提供 |
 | MCP Server（GitHub API） | 框架可选的信息收集能力（只读） | ⭕ 可选 |
 
 ---
@@ -260,7 +260,9 @@ hatch run main -t ai_audit.alert_triage_example \
 
 > ⚠️ 由于示例会为真实漏洞**创建公开 Issue 与私密安全公告**，`GH_PAT` 必须**同时**具有：
 > ① 仓库的 `issues` 写权限（建公开 Issue）；② 细粒度 PAT 的 **`Repository security advisories` 读+写权限**
-> （查询与创建私密公告，对应 `GET`/`POST /repos/{owner}/{repo}/security-advisories`）。
+> （**查询**与创建私密公告，对应 `GET`/`POST /repos/{owner}/{repo}/security-advisories`）。
+> ⚠️ **读权限与写权限必须一起给**：查询是逐条构建内容前的第一道去重，缺读权限时无法判断
+> 该告警是否已开过公告，只能按「宁可跳过、不可重复」处理。
 > **这两项权限不通用**：仅授予 `issues` 写时，列公告去重与创建公告都会返回 403/404。
 > 此时 `publish` job **不再整体失败**——受影响的**该条**告警被跳过（既无公告也无公开 Issue），
 > 控制权交还给逐条处理循环，后续告警继续走完「公告 → 公开 Issue」全流程；
@@ -345,6 +347,12 @@ hatch run main -t ai_audit.alert_triage_example \
   1. **列私密公告失败**（典型为 `GH_PAT` 缺 `Repository security advisories` 读权限，
      或 API 临时 5xx）：此时无法判断该告警的公告是否已存在，**跳过该条**
      （不建公告、也不建公开 Issue），控制权交还循环，后续告警继续正常处理；
+     > ⚠️ 「跳过」而不是「终止 job」是**刻意**的取舍：该失败只影响本条告警，
+     > 后续告警的去重判断完全独立。若在此终止，一次权限缺配就会让**整批**告警
+     > 既不建公告也不建 Issue，而维护者只能看到一句「job failed」，无从得知
+     > 哪些告警被漏处理。跳过则把损失限定在受影响的那几条，并在结尾汇总里可数。
+     > 与之相对，「查既有 Issue 失败」仍然是 `exit 1`（见下）——那是**全量**语义的判据，
+     > 无法只用「跳过该条」表达。
   2. **创建私密公告失败**（如只有 `issues` 写而无公告写权限）：同样跳过该条，
      不会建出「公开无细节、私密无记录」的悬空跟踪项；
   3. **`alert_number` 守卫拦截**：跳过该条，绝不降级发布受污染文本。
@@ -352,6 +360,9 @@ hatch run main -t ai_audit.alert_triage_example \
   > 查既有 Issue 失败（无法判断是否已存在，贸然创建会造成重复）、
   > 创建后自愈查询失败（Issue 已建出，必须人工核对是否留下重复）。
   > 判据：**「这条失败了，下一条还能不能安全地独立判断」**——能，就跳过继续；不能，就停下。
+  4. **去重翻页超硬上限**（`MAX_DEDUPE_PAGES=10000` 页）：两个 `find_*` 辅助函数的退出
+     条件是「取到空页」，上游若异常地持续返回整页，会一直翻到 job 超时。加了上限后，
+     最坏情况变成**一次可诊断的失败/跳过**，而不是静默拖死到 Actions 超时强杀。
 
 ---
 

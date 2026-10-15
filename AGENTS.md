@@ -1135,8 +1135,18 @@ pre-commit run --all-files
 > 而非无条件成立。维护者在评估暴露面时，必须把它单独计入。
 
 所需 Secrets（仓库 Settings → Secrets and variables → Actions）：`AI_API_ENDPOINT` / `AI_API_TOKEN` /
-`AI_MODEL_NAME`（AI 分流，**注入 triage**）与 `GH_PAT`（读 security_events + 写 issues/repo，**仅注入 publish**）；
+`AI_MODEL_NAME`（AI 分流，**注入 triage**）与 `GH_PAT`（读 security_events + 写 issues/repo
++ `Repository security advisories` **读+写**（查询/创建私密公告；**读权限与写权限缺一不可**：
+缺读权限则无法做公告去重，只能按「宁可跳过、不可重复」处理该条告警），**仅注入 publish**）；
 `MCP_CONFIG` 可选（注入 triage，**其内嵌 GitHub 凭据须自行配为只读**，否则请勿启用）。**所有令牌严禁写进代码、`.cnb.yml`、文档或评论。**
+
+> ⚠️ **`publish` 的逐条容错取舍（勿简化成「失败就整体退出」）**：逐条循环对**单条可恢复**
+> 的失败（列公告失败 / 建公告失败 / 编号守卫拦截）一律 `continue` 跳过该条并计入 `SKIPPED`，
+> 而非让 `set -euo pipefail` 终止整个 job——否则一次 `GH_PAT` 权限缺配就会让**整批**告警
+> 既不建公告也不建 Issue，维护者只见「job failed」而不知漏了哪些。判据是
+> **「这条失败了，下一条还能不能安全地独立判断」**：能（列公告失败、建公告失败）就跳过继续；
+> 不能（查既有 Issue 失败、创建后自愈查询失败）才 `exit 1` 交维护者介入。
+> 另：两个去重辅助函数均设翻页硬上限 `MAX_DEDUPE_PAGES`，防上游异常时无限翻页拖到 Actions 超时。
 
 #### 11.8.2 令牌安全通行原则（PR 受控代码不得接触 Secret）
 
