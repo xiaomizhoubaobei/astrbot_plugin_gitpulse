@@ -51,6 +51,8 @@ seclab-taskflow-agent:
 # memcache key 前缀，标识审计对象；也可通过 -g repo=... 覆盖。
 # ⚠️ 它**不会**注入 shell 任务的 run:（框架不渲染 run:），故第 0 步拉取告警的
 #    仓库路径改为在该步 run 里**写死**；两处值必须保持一致（见该步注释）。
+# ⚠️ globals.repo 必须与 workflow 传入的 `-g repo=` 一致（同为本仓库 github.repository）。
+#    本仓库在 CNB 侧开发，GitHub 侧为镜像仓库；workflow 注入的是镜像仓库路径。
 globals:
   repo: xiaomizhoubaobei/astrbot_plugin_gitpulse
 
@@ -76,12 +78,13 @@ taskflow:
         #   （见框架 runner.py：shell 分支直接 shell_tool_call(run)，不经 render_template）。
         #   因此 run: 里的 {{ globals.repo }} 只会是**死字面量**，会拼出
         #   `https://api.github.com/repos/{{ globals.repo }}/...` 这种非法 URL → 告警拉取必失败。
-        #   故此处直接写死仓库路径，保证拉取端点正确。
+        #   故本步改为**优先读环境变量 AUDIT_REPO**（workflow 注入 ${{ github.repository }}，
+        #   与 `-g repo=` 同源），未注入时才回落到写死的本仓库路径。
         # ⚠️ 一致性约束：本值必须与上方 globals.repo 及 workflow 传入的
         #   -g repo="${{ github.repository }}" **完全一致**——globals.repo 用于
         #   智能体任务（user_prompt 会渲染）里的 memcache key，若两者不一致会
         #   重新引入「拉 A 仓库告警、却按 B 仓库的 key 审计 / 建 Issue」的仓库分裂。
-        _REPO="xiaomizhoubaobei/astrbot_plugin_gitpulse"
+        _REPO="${AUDIT_REPO:-xiaomizhoubaobei/astrbot_plugin_gitpulse}"
         : "${_REPO:?仓库路径未设置（owner/repo）}"
         # 有界网络参数：宁可单页请求失败后重试，也不让 curl 无限期挂起。
         #   --connect-timeout 10  建连超时

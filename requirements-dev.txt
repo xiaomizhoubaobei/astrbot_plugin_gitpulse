@@ -1,0 +1,20 @@
+# 开发/测试依赖：由 Dependabot 跟踪（pip ecosystem，directory=/），
+# 避免测试工具被工作流内联安装而长期得不到更新。
+
+# 插件运行依赖（aiohttp 等）
+-r requirements.txt
+
+# AstrBot 宿主：main.py 依赖 astrbot.api / astrbot.core.* 才能被导入。
+#
+# 宿主**不从 PyPI 装**，一律取自上游官方源码（github.com/AstrBotDevs/AstrBot）：
+#   git clone https://github.com/AstrBotDevs/AstrBot.git
+#   pip install -e AstrBot
+# CI（.github/workflows/coverage.yml）按此口径拉源码后安装，与「插件跑在源码宿主上」
+# 的真实运行形态一致，也避免 PyPI 版与上游代码漂移。
+# 因此本清单**不声明** astrbot 依赖（Dependabot 不跟踪 git 源，强行写只会失效）。
+# 注意：本仓库 tests/conftest.py 已在 astrbot 缺失时注入最小桩，故即使未装宿主，
+# 单测仍可跑通——这也是 CI 未强制安装宿主的原因。
+
+pytest>=8.0
+pytest-asyncio>=0.23
+coverage>=7.0

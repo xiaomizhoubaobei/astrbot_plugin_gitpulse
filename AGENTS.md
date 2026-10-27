@@ -1073,16 +1073,31 @@ pre-commit run --all-files
 
 | Workflow | 作用 |
 | --- | --- |
-| `CodeQL.yml` | 代码安全分析 |
+| `CodeQL.yml` | 代码安全分析（Python 语义级，显式安装依赖 + `compileall` 自检后再提取） |
 | `ai-audit-scheduled.yml` | CodeQL 完成后自动做 AI 告警分流（见下方 §11.8.1） |
-| `security-scan.yml` / `DevSkim.yml` / `secret-scanning.yml` | 安全与密钥扫描 |
+| `security-scan.yml` / `DevSkim.yml` / `secret-scanning.yml` | 安全与密钥扫描（Bandit / DevSkim / trufflehog） |
 | `PythonDependencyAudit.yml` / `dependency-review.yml` | 依赖审计与依赖变更审查 |
-| `tfsec.yml` | IaC 安全扫描 |
+| `tfsec.yml` | IaC 扫描（Trivy `config`，tfsec 规则集） |
 | `Scorecard.yml` | 供应链安全评分 |
 | `inclusiveness-analyzer.yml` | 包容性分析 |
 | `stale.yml` | 陈旧 Issue / PR 自动化 |
-| `release.yml` | 发布流程 |
+| `release.yml` | 发布流程（含发布包白名单边界校验、ci-evidence-pack 证据包） |
 | `coverage.yml` | 单元测试覆盖率统计并上报 Codecov（`main` push / PR，见下方 §11.8.3） |
+
+> 📌 **口径统一（2026-10 同步）**：本目录工作流已与
+> `XMZZUZHI/Astrbot/astrbot_plugin_ots_memory` 的 `.github/workflows` 对齐
+> （版本钉定、`harden-runner` 升级、`ai-audit` 的公钥加密交接与来源校验等），
+> 并按本仓库的 `src/` 布局做了三处**必须保留**的本地适配，切勿在下次同步时被覆盖：
+> 1. **Python 版本一律 3.12 起**（`CodeQL.yml` / `security-scan.yml` 单版本 3.12，
+>    `PythonDependencyAudit.yml` 矩阵 `3.12/3.13/3.14`，`coverage.yml` 同）
+>    —— 本仓库声明 3.12+，上游模板的 3.13 起不适用。
+> 2. **依赖清单位于 `src/requirements.txt`**（`PythonDependencyAudit.yml` 的 `inputs`、
+>    `release.yml` 的安装与打包都按此路径）；根目录另外补了 `requirements.txt` /
+>    `requirements-dev.txt`，只为给 Dependabot 一个 pip 生态的追踪入口，内容与 `src/`
+>    同源，新增依赖时**两处一起改**。
+> 3. **`ai-audit/alert_triage_example.yaml` 的第 0 步读 `AUDIT_REPO` 环境变量**
+>    （workflow 注入 `${{ github.repository }}`），不再写死仓库路径；`globals.repo`
+>    仍为镜像仓库 `xiaomizhoubaobei/astrbot_plugin_gitpulse`，两者必须同源。
 
 > ⚠️ **本表须与 `ls .github/workflows/` 的实际结果保持一致**：上述工作流均已随
 > 「迁移 `.github` 目录并适配本仓库」落地（自生图插件模板同步而来，并按本仓库的
@@ -1094,7 +1109,7 @@ pre-commit run --all-files
 > **OSSAR 工作流已移除（`ossar.yml`）**：上游 `github/ossar-action` 停更在 v2.0.0（2024-04），
 > 其 `action.yml` 固定为 `node20`、内置 `@actions/core@1.2.6` 仍使用已废弃的 `set-output` 命令，
 > 因此持续产生「Node.js 20 弃用」与「`set-output` 弃用」两条告警，且**上游无 Node 24 版本可升**。
-> 其能力（静态安全分析）现由 `CodeQL.yml`（Python 语义级分析，主运行器矩阵覆盖三平台三版本）
+> 其能力（静态安全分析）现由 `CodeQL.yml`（Python 语义级分析，单运行器单版本——Python 查询与 OS/版本无关，多矩阵只增成本不加覆盖）
 > 与 `ai-audit-scheduled.yml`（消费 CodeQL 告警做 AI 自动分流）承接，
 > 故直接移除该工作流以根治告警，避免为消警而长期背负一个无人维护的 Action。
 
@@ -1194,6 +1209,11 @@ pre-commit run --all-files
   `.cnb.yml`、文档或评论；未配置 token 时上报步骤 `continue-on-error` 跳过，CI 不失败（仅留存 `coverage-xml` 工件），属预期行为。
 - `codecov.yml` 的 `project` / `patch` 门禁目前均为 `informational: true`（只提示不卡 PR）；
   要收紧时改这两处，而不是在 CI 里加 `--fail-under`。
+- **测试矩阵 `3.12/3.13/3.14`，但只有首版本（3.12）上报 Codecov**：多版本重复上报同一份
+  源码的覆盖率没有增量信息，只会让 Codecov 侧互相覆盖、徽章抖动；其余版本只负责「跑通」。
+  矩阵版本一旦调整，`if: matrix.python-version == '<首版本>'` 的判定必须同步修改。
+- 依赖安装只走 `pip install -r requirements-dev.txt`（`-r requirements.txt` 再叠加测试工具），
+  **不再**在 CI 里逐个 `pip install pytest coverage`——测试工具版本由该文件承载、由 Dependabot 跟踪。
 - **完成 Codecov 接线后仍需人工做一步**：用 GitHub 账号在 Codecov 授权本仓库并让 CI 成功上报一次，
   徽章才会从 unknown 变为真实百分比。
 

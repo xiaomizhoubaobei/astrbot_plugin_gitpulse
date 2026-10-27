@@ -2,11 +2,8 @@
 # AI 审计（AI 漏洞分流）— CodeQL 完成后自动运行
 # =============================================================================
 # 用途：在 CodeQL 工作流（.github/workflows/CodeQL.yml）完成后自动运行
-#       ai-audit/alert_triage_example.yaml，对 CodeQL 安全告警做 AI 自动分流。
-# ⚠️ 审计范围：taskflow 第 0 步以 state=open&tool_name=CodeQL 逐页拉取的是
-#    **仓库中所有仍处于 open 状态的 CodeQL 告警**，而非仅与触发本工作流的那次
-#    CodeQL 运行相关联的告警。CodeQL 的完成事件只决定**何时触发**，不限定
-#    **审哪些**告警；仓库里残留的更早 open 告警同样会被本次审计纳入分流。
+#       ai-audit/alert_triage_example.yaml，消费本仓库 CodeQL 扫描产生的最
+#       新安全告警，做 AI 自动分流。
 #
 # ── 安全模型（本工作流的核心设计，勿削弱） ──────────────────────────────────
 # 威胁：workflow_run 会为 **PR（含 fork）触发的 CodeQL 运行** 也开火，而 PR 源码
@@ -16,17 +13,18 @@
 #
 # 对策：把流程劈成两段，中间只以 artifact（纯数据）传信，令牌与不可信源码
 #       物理隔离：
-#       ┌─ triage  job（无仓库写权限；注入 AI_* 与只读 GITHUB_TOKEN）───────┐
-#       │  仅在**可信 ref**（默认分支或手动触发的本次 ref）上检出源码；      │
-#       │  只给 content-free 的只读审计能力；产出结构化审计结论 artifact。   │
+#       ┌─ triage  job（无仓库写凭据 / 不接触 GH_PAT）──────────────────────┐
+#       │  只在**默认分支**上检出源码（手动触发也不用 github.ref）；         │
+#       │  只给只读的审计能力（AI_API_TOKEN 调 LLM + 只读 GITHUB_TOKEN 读    │
+#       │  告警），产出结构化审计结论 artifact。                            │
 #       └──────────────────────────────────────────────────────────────────┘
-#       ⚠️ 关于 triage 的写能力边界：其注入的 AI_* 与只读 GITHUB_TOKEN 均无仓库写能力，
-#          但可选的 MCP_CONFIG 内嵌凭据权限**不受本工作流约束**，须自行配为只读（详见下方）。
-#                              ↓ audit-verdicts.json（数据）
+#                              ↓ audit-verdicts.json（**公钥加密+HMAC 后的密文** + 封装密钥）
 #       ┌─ publish job（唯一持 GH_PAT 的 job）──────────────────────────────┐
 #       │  不检出/不执行任何不可信源码；只消费 artifact 里的结构化结论。     │
 #       │  【协调披露】漏洞细节走**私密 security advisory**，公开 Issue 只   │
 #       │  留脱敏占位（指纹 + 告警编号），不在修复前暴露可利用细节。        │
+#       │  artifact 为**公钥加密的密文**：读权限者可下载但不可读，只有本    │
+#       │  job（持私钥）能解密 —— 交接全程不泄漏未修复漏洞细节。            │
 #       │  输入已被上游 schema 约束，无法注入。                              │
 #       └──────────────────────────────────────────────────────────────────┘
 #
@@ -34,7 +32,17 @@
 #   - workflow_run：监听 CodeQL.yml（name: "代码质量分析"）的 completed 事件。
 #     仅当上游运行成功、且其 head 分支属于**本仓库**（非 fork）时才进入 triage
 #     （见 jobs.triage.if 的 head_repository 门禁），从源头掐断 fork 源码流入。
-#   - workflow_dispatch：保留手动触发，方便首次部署时验证链路。
+#   - workflow_dispatch：保留手动触发以便首次部署验证，但**不得**让任意分支的源码
+#     流入持有 GH_PAT 的 publish job。威胁：手动触发会以「所选 ref 的源码」运行，
+#     若允许在任意分支/任意 ref 上触发，等于任何有 workflow 运行权限的人都可拿一个
+#     被改写过的 triage 去喂 publish job，借高权限 PAT 发文（伪同 pwn-request）。
+#     对策（两道锁）：
+#       ① checkout 的 ref 固定为**默认分支**（绝不用 `github.ref`），故无论手选哪个
+#          分支，执行的 triage 源码恒为已合并的可信代码；
+#       ② publish job 绑定受保护的 `environment`（需人工审批），把「持令牌发文」
+#          收窄到获批主体。
+#     ⚠️ 请勿把 checkout 的 ref 改回 `github.ref`——那会让所选分支的源码进入
+#        高权限链，重新打开本条门禁。
 #
 # 所需 Secrets（仓库 Settings → Secrets and variables → Actions）：
 #   - AI_API_ENDPOINT 必填，上游 base_url（OpenAI 兼容口，如 https://api.deepseek.com/v1）
@@ -42,20 +50,22 @@
 #   - AI_MODEL_NAME   必填，实际调用的模型名（如 deepseek-v4-flash / qwen-max / kimi-k2 等）。
 #                     框架经环境变量 COPILOT_DEFAULT_MODEL 读取（见 model_config.yaml），
 #                     工作流运行时将本 Secret 透传过去，从而免改代码即可切换模型。
-#   - GH_PAT          必填，GitHub PAT，需同时含以下权限（⚠️ 均为 **publish** job 所需）：
-#                     · repo / issues 写权限   —— 创建公开跟踪 Issue
-#                     · Repository security advisories 读+写权限 —— 查询并创建**私密安全公告**
-#                       （细粒度 PAT 里名为 "Repository security advisories"，权限项标记为
-#                        read and write；对应 `GET`/`POST /repos/{owner}/{repo}/security-advisories`。
-#                        ⚠️ 该权限与 `issues` 写**不通用**：仅给 `issues` 写会导致列公告去重与
-#                        创建公告都返回 403/404，此时 publish job 会**跳过该条告警**（既不建公开
-#                        Issue，也不建公告），其余告警继续处理。故必须单独授予，勿漏配。）
-#                     ⚠️ 无需 security_events 读权限：读取本仓库 CodeQL 告警由 triage
-#                     job 的只读 GITHUB_TOKEN（security-events: read）完成，与 GH_PAT 无关。
+#   - GH_PAT          必填，GitHub PAT，需同时含以下权限：
+#                     · security_events 读权限 —— 读取本仓库 CodeQL 告警
+#                     · issues 写权限          —— 创建公开跟踪 Issue
+#                     · repository_advisories:write —— 创建私密安全公告（security advisory）
+#                       细分令牌（fine-grained PAT）需**同时具备该权限与
+#                       仓库管理员/安全经理（security manager）角色**；
+#                       或改用 classic PAT（`repo` scope，且账号为仓库管理员/安全经理）。
 #                     ⚠️ 仅注入 publish job（见下），triage job 绝不接触该 Secret。
-#   - MCP_CONFIG      可选，MCP Server（GitHub API）配置。
-#                     ⚠️ 可能内嵌你自行提供的 GitHub 凭据，其权限范围不受本工作流约束；
-#                     若启用请务必配成**只读**，否则 triage job 不再满足「无仓库写能力」。
+#                     ⚠️ 若只配 `repo/issues` 写权限，建公告会在建公开 Issue **之前**失败。
+#   - AUDIT_HANDOFF_PRIVATE_KEY
+#                     必填（启用加密交接后），与仓库内 ai-audit/handoff-public-key.pem
+#                     **配对的 RSA 私钥**（PEM 全文）。triage 用**公钥**加密结论后
+#                     才上传 artifact，本 Secret 仅注入 publish job 用于解密。
+#                     ⚠️ 生成方式见 ai-audit/README.md「加密交接」一节；公钥为公开
+#                        信息可随仓库提交，私钥**只能**经 Secret 注入、严禁入库。
+#   - MCP_CONFIG      可选，MCP Server（GitHub API）配置
 #
 # ⚠️ 注意：
 #   - 首次使用前请先用 workflow_dispatch 手动跑一次，确认链路正常。
@@ -98,61 +108,63 @@ concurrency:
   # group 固定为工作流名（不掺 ref/事件），确保**所有**触发源的实例都排进同一条队列；
   # 若按 github.ref 分组，不同分支/事件的并发实例会落入不同队列，竞态依旧。
   group: ${{ github.workflow }}
-  # false = 排队而非取消：宁可稍等，也不并发发文
+  # false = 不取消正在跑的实例：宁可稍等，也不并发发文
   cancel-in-progress: false
+  # ⚠️ 仅设 cancel-in-progress: false **不等于**「排队」：默认行为是「新实例替换掉
+  #    该 group 里尚未开始的 pending 实例」——若 CodeQL 连续多次完成，先前排队的
+  #    实例会被后到的顶掉，其审计结论被静默丢弃（表现为「跑了 CodeQL 却没发文」）。
+  #    queue: max 让 pending 实例**全部保留**、按序排队执行，杜绝静默丢单。
+  queue: max
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Job 1：审计（无仓库写权限；注入 AI_* + 只读 GITHUB_TOKEN，不接触 GH_PAT）
+  # Job 1：审计（无仓库写凭据、不接触 GH_PAT）
   # ---------------------------------------------------------------------------
   # 这是「不可信输入」与「高权限动作」之间的隔离墙：本 job 只做只读分析，
-  # 产出结构化结论 artifact；**在本工作流自身的配置范围内**不持有任何可写仓库的凭据。
-  # ⚠️ 注意边界：本 job 并非「无任何 Secret」——它注入 AI_API_ENDPOINT / AI_API_TOKEN /
-  #    AI_MODEL_NAME（调用 LLM 分流，不具备仓库写能力）、只读的 GITHUB_TOKEN（读 CodeQL 告警）
-  #    与可选的 MCP_CONFIG。仅 GH_PAT 被排除在本 job 之外（只在 publish job 注入）。
-  # ⚠️ MCP_CONFIG 是本 job「无仓库写能力」结论的唯一例外：它是一份 MCP Server 配置，其中
-  #    可能内嵌**由使用者自行提供**的 GitHub 凭据，其权限范围**不受本工作流约束**（工作流
-  #    既读不到、也管不了它）。因此上述结论**仅在把 MCP_CONFIG 内嵌凭据配为只读时成立**；
-  #    若为其配了写权限令牌，本 job 的写能力边界即被使用者自行放大，请自行承担该暴露面。
+  # 产出结构化结论 artifact；它**永远不持有**任何可写仓库的凭据。
+  # ⚠️ 注意措辞：本 job 并非「零凭据」——它仍需 AI_API_TOKEN（调 LLM）与只读的
+  #    GITHUB_TOKEN（读 CodeQL 告警）；应准确表述为「**不持仓库写凭据**」。
   triage:
-    name: 审计分流（无仓库写权限）
+    name: 审计分流（无仓库写凭据）
     runs-on: ubuntu-latest
     permissions:
       # 只读：足够读取 CodeQL 告警与仓库内容；本 job 不持有任何仓库写凭据。
       contents: read
       security-events: read
     # 门禁：
-    #   1) 手动触发直接放行；
+    #   1) 手动触发需落在**默认分支**上才放行（配合下方 checkout 固定默认分支，
+    #      即便手选其它分支，执行的 triage 源码仍是已合并的可信代码）；
     #   2) workflow_run 需上游 CodeQL 成功完成（避免失败/取消的过期扫描状态）；
     #   3) 【安全关键】上游运行的 head 仓库必须是本仓库，即 fork PR 触发的
     #      CodeQL 运行**一律不进入本工作流**，杜绝 PR 源码充当不可信输入。
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
     steps:
       # 只读出站加固运行器（audit 模式：记录所有出站调用，便于事后审计）
       - name: 加固运行器（审计所有出站调用）
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
 
-      # 拉取源码：只认**可信 ref**，绝不用 workflow_run 事件里的 PR head。
-      #   手动触发 -> 当前 ref（由有写权限的维护者手动发起，可信）；
-      #   workflow_run -> 本仓库默认分支（上游已在 if 中排除 fork），确保检出的是
-      #   已合并的可信代码，而非事件携带的任意提交。
+      # 拉取源码：**一律默认分支**，绝不用 workflow_run 事件里的 PR head，
+      #   也**不用** `github.ref`（手动触发时它指向所选分支，会把未审分支的源码送进
+      #   下游持 GH_PAT 的 publish 链）。上游已在 if 中排除 fork，故默认分支恒为
+      #   已合并的可信代码。
       # ⚠️ 第三方 Actions 一律锁定到已复核的不可变 commit SHA，禁用易被上游篡改的
       #   浮动 tag（如 actions/checkout@v4）；框架同样锁定到复核过的发布 commit。
-      - name: Checkout 本项目（仅可信 ref）
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Checkout 本项目（仅可信 ref：默认分支）
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref || github.event.repository.default_branch }}
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       # 拉取 seclab-taskflow-agent 框架，固定到已复核发布的不可变 commit SHA
       - name: Checkout seclab-taskflow-agent 框架（固定 commit）
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: GitHubSecurityLab/seclab-taskflow-agent
           # 固定到复核过的 v0.5.0 发布 commit，而非浮动默认分支
@@ -172,13 +184,10 @@ jobs:
       - name: 安装 hatch（锁定版本）
         run: pip install hatch==1.14.0 "virtualenv<21"
 
-      # 运行 AI 审计 taskflow（消费仓库全部 open 的 CodeQL 告警，非仅本次运行的增量），
-      # 产出结构化结论 artifact。
+      # 运行 AI 审计 taskflow（消费最新 CodeQL 告警），产出结构化结论 artifact。
       # ⚠️ 本 job 不注入 GH_PAT；读取 CodeQL 告警所需的只读令牌用 GITHUB_TOKEN
       #   （其权限已被顶层收紧到 contents: read，且上游 CodeQL 告警读取无需写权限）。
       #   AI_* 凭据仅用于调用 LLM，不具备任何仓库写能力。
-      # ⚠️ MCP_CONFIG 可选：其内嵌 GitHub 凭据由使用者自行提供、权限范围不受本工作流约束，
-      #   本 job「无仓库写能力」的前提是该凭据已被配为只读（不配则最稳妥）。
       - name: 运行 AI 审计 taskflow（无仓库写凭据）
         working-directory: seclab-taskflow-agent
         env:
@@ -190,6 +199,10 @@ jobs:
           MCP_CONFIG: ${{ secrets.MCP_CONFIG }}
           # 审计结果落盘位置，供 publish job 消费
           AUDIT_VERDICT_FILE: /tmp/audit-verdicts.json
+          # 仓库路径（owner/repo）：与下方 `-g repo=` **同源**（都取 github.repository），
+          # 供 shell 任务的第 0 步拉取告警端点使用，杜绝「拉 A 仓库告警、却按 B 仓库 key
+          # 审计」的仓库分裂（shell 的 run: 不做模板渲染，拿不到 globals.repo）。
+          AUDIT_REPO: ${{ github.repository }}
         run: |
           # 模型从仓库 Secret AI_MODEL_NAME 经 COPILOT_DEFAULT_MODEL 传入框架，
           # 因此调用前必须确保其非空（GitHub Actions 未配置的 Secret 会解析成空串）
@@ -206,43 +219,280 @@ jobs:
           hatch run main -t ai_audit.alert_triage_example \
               -g repo="${{ github.repository }}" \
               -m ai_audit.model_config
-          # 兜底：若 taskflow 未产出结论文件，写一个空数组，保证 artifact 存在
+          # 兜底：若 taskflow 未产出结论文件，写一个空数组，保证后续步骤有输入
           [ -f "$AUDIT_VERDICT_FILE" ] || echo '[]' > "$AUDIT_VERDICT_FILE"
 
-      # 上传审计结论（纯数据），交给下游持令牌的 publish job。
-      # 仅上传结论 JSON，不上传任何可执行产物，避免下游执行不可信代码。
-      - name: 上传审计结论 artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      # ── 空结论短路（triage 侧）：无 APPROVED 结论时**不产出任何密文** ──────
+      # 成因：taskflow 在**无 APPROVED 结论**时也会正常收尾，兜底逻辑会把
+      #      `/tmp/audit-verdicts.json` 写成 `[]`。若照旧加密并上传，下游 publish
+      #      job 拿到的是「合法密文（明文为空数组）」——它**无从判断内容是否为空**，
+      #      只能照常解密，于是无 APPROVED 结论的运行仍会去撞 `AUDIT_HANDOFF_PRIVATE_KEY`：
+      #      首次部署尚未配密钥时 publish 会**硬失败**（"CodeQL 跑完 → AI 审计红了"），
+      #      却是「毫无可发布内容」，把配置缺失误报成链路故障。
+      # 对策：在这里就用**确定性外壳检查**判空（`jq 'length'`），并把结论**显式**外化
+      #      为一枚标记文件 `audit-verdicts.empty`：
+      #        · 结论为空 → 只产出这枚标记，**跳过加密**、**不上传任何密文**；
+      #        · 结论非空 → 照常加密并上传密文三件套（不产出标记）。
+      #      publish 侧据此在**任何密码学操作之前**短路跳过，与私钥是否配置解耦。
+      # 安全边界不变：判空只看「条数」，不解析、不放宽任何完整性要求；确有内容时
+      #      仍严格走「配对自检 → 验 HMAC → 解密 → 数组格式校验」。
+      - name: 判空并写入空结论标记（无 APPROVED 结论时不产出密文）
+        id: emptiness
+        run: |
+          set -euo pipefail
+          VERDICT_FILE=/tmp/audit-verdicts.json
+          [ -f "$VERDICT_FILE" ] || { echo "缺少结论文件 $VERDICT_FILE" >&2; exit 1; }
+          # 防御：结论文件必须是合法 JSON 数组（与 publish 侧同源的格式校验）
+          jq -e 'type == "array"' "$VERDICT_FILE" >/dev/null \
+            || { echo "结论文件不是 JSON 数组，拒绝继续" >&2; exit 1; }
+          COUNT="$(jq 'length' "$VERDICT_FILE")"
+          if [ "$COUNT" -eq 0 ]; then
+            # 显式空结论标记：**唯一**的空结果信号，publish 侧只认这枚文件
+            : > /tmp/audit-verdicts.empty
+            echo "empty=true" >> "$GITHUB_OUTPUT"
+            echo "本次无 APPROVED 结论（0 条），跳过加密与上传：仅交付空结论标记。"
+          else
+            rm -f /tmp/audit-verdicts.empty
+            echo "empty=false" >> "$GITHUB_OUTPUT"
+            echo "本次待发布结论 $COUNT 条，继续加密并上传密文三件套。"
+          fi
+
+      # ── 加密结论（协调披露的关键一步） ─────────────────────────────────────
+      # 威胁：artifact 会被平台**持久化，且任何拥有仓库读权限的人都能下载**
+      #       （公开仓库 = 任何互联网读者）。而 verdict 里含 `report` 全文、
+      #       `rule`、`path` —— 正是本工作流刻意**不**放进公开 Issue 的未修复漏洞细节。
+      #       若明文上传，等于把「私密 advisory」里的细节经由 artifact 泄成公开可读，
+      #       彻底架空 SECURITY.md 的协调披露设计。
+      # 对策：在上传前用**公钥（非机密）**做混合加密 + **加密后认证**（encrypt-then-MAC），
+      #       只上传密文：
+      #         · 数据密钥 / MAC 密钥均为 64 位十六进制**可打印**串（避免 raw 二进制经
+      #           `-pass file:` 时被换行/空字节截断而退化成空口令）；
+      #         · 用数据密钥做 AES-256-CBC 加密；
+      #         · 用独立的 MAC 密钥对**密文**做 HMAC-SHA256（先加密后认证）；
+      #         · 两个密钥一并经 RSA-OAEP-SHA256 封装。
+      #       公钥可就地提交、无需注入任何 Secret —— **triage job 因此保持零凭据**
+      #       （安全墙不削弱）。唯一能解密的是持私钥的 publish job（私钥经 Secret 注入）。
+      # 完整性：publish 侧**先验 HMAC 再解密**——`openssl enc` 不支持 AEAD（GCM 会被拒绝），
+      #       故用 encrypt-then-MAC 达到等效的「密文被篡改即拒绝」，而非只做数组格式检查。
+      # 顺带收益：密文对读权限所有者不可读，且密文不可执行，下游仍只消费数据。
+      - name: 加密审计结论（公钥混合加密 + encrypt-then-MAC，仅上传密文）
+        if: steps.emptiness.outputs.empty != 'true'
+        env:
+          # 公钥随仓库提交（公开信息），triage 不接触任何 Secret
+          AUDIT_HANDOFF_PUBLIC_KEY: ${{ github.workspace }}/ai-audit/handoff-public-key.pem
+        run: |
+          set -euo pipefail
+          : "${AUDIT_HANDOFF_PUBLIC_KEY:?缺少公钥路径}"
+          test -f "$AUDIT_HANDOFF_PUBLIC_KEY" \
+            || { echo "公钥文件不存在：$AUDIT_HANDOFF_PUBLIC_KEY" >&2; exit 1; }
+          umask 077
+          # 1) 生成两枚**可打印**的一次性随机密钥（各 64 位十六进制字符 = 256 bit 熵），
+          #    ⚠️ 必须用 hex 而非 raw 二进制：`-pass file:` 只读**首行**，raw 里随机的
+          #       换行会截断口令、首字节若恰为 LF 则口令为空（等效无口令）。
+          ENC_KEY="$(openssl rand -hex 32)"   # 数据加密密钥
+          MAC_KEY="$(openssl rand -hex 32)"   # 完整性认证密钥（与加密密钥分离）
+          # 2) AES-256-CBC + PBKDF2 加密结论（salt 由 openssl 随机生成）
+          printf '%s' "$ENC_KEY" > /tmp/.audit-enc.key
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+            -in /tmp/audit-verdicts.json -out /tmp/audit-verdicts.json.enc \
+            -pass file:/tmp/.audit-enc.key
+          # 3) encrypt-then-MAC：对**密文**做 HMAC-SHA256（先加密后认证，避免篡改密文）
+          printf '%s' "$MAC_KEY" | openssl dgst -sha256 -mac HMAC -macopt hexkey:"$MAC_KEY" \
+            -binary /tmp/audit-verdicts.json.enc > /tmp/audit-verdicts.json.mac
+          # 4) 用**公钥**（RSA-OAEP-SHA256）封装「加密密钥 + MAC 密钥」（JSON 明文交付）
+          printf '{"enc_key":"%s","mac_key":"%s"}' "$ENC_KEY" "$MAC_KEY" > /tmp/.audit-keys.json
+          openssl pkeyutl -encrypt -pubin -inkey "$AUDIT_HANDOFF_PUBLIC_KEY" \
+            -in /tmp/.audit-keys.json -out /tmp/audit-verdicts.key.enc \
+            -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256
+          # 5) 清除明文与临时密钥材料，避免误上传
+          shred -u /tmp/audit-verdicts.json /tmp/.audit-enc.key /tmp/.audit-keys.json \
+            2>/dev/null || rm -f /tmp/audit-verdicts.json /tmp/.audit-enc.key /tmp/.audit-keys.json
+          echo "已加密+认证：仅上传 audit-verdicts.json.enc（密文）、audit-verdicts.key.enc（封装密钥）、audit-verdicts.json.mac（HMAC）"
+
+      # 上传审计结论（**密文**），交给下游持令牌与私钥的 publish job。
+      # 仅上传加密后的纯数据，不上传任何可执行产物，避免下游执行不可信代码。
+      # ⚠️ 上传路径是**互斥**的两条分支（见上一步的 `empty` 输出）：
+      #    · 非空 → 上传密文三件套（.enc/.key.enc/.mac）；
+      #    · 空   → 只上传空结论标记 audit-verdicts.empty（**不含任何密文**）。
+      #      正因如此，无 APPROVED 结论运行时 artifact 里根本不存在 `.enc`，publish 侧
+      #      的判空短路无论如何都会命中，无需（也不应）依赖私钥。
+      - name: 上传加密后的审计结论 artifact（空结论时只上传标记）
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: audit-verdicts
-          path: /tmp/audit-verdicts.json
+          path: |
+            /tmp/audit-verdicts.json.enc
+            /tmp/audit-verdicts.key.enc
+            /tmp/audit-verdicts.json.mac
+            /tmp/audit-verdicts.empty
+          # 空结论时只有 .empty、无内容时为三件套，任何一个分支都至少有一个文件
           if-no-files-found: error
+          # 进一步缩短留存期，降低密文在平台上被长期留存的暴露面
+          retention-days: 7
 
   # ---------------------------------------------------------------------------
   # Job 2：发布（唯一持有 GH_PAT 的 job）
   # ---------------------------------------------------------------------------
-  # 本 job 的输入只有上游 artifact（结构化 JSON），字段受白名单约束，因此即便
+  # 本 job 的输入是上游 artifact（结构化 JSON），字段受白名单约束，因此即便
   # artifact 内容被污染，也无法注入工作流或命令；它不检出/不执行任何仓库源码。
+  # ⚠️ 该 artifact 已在 triage 侧用**公钥混合加密 + encrypt-then-MAC**，本 job 用私钥
+  #    （Secret 注入）**先验 HMAC 再解密**后才消费：读权限者即使下载了 artifact 也只能
+  #    拿到密文，且任何篡改都会被 MAC 拦下，无法影响发布结果。
   publish:
     name: 创建 Issue（持令牌）
     needs: triage
     runs-on: ubuntu-latest
     # 仅当上游确实产出了结论时才跑
     if: needs.triage.result == 'success'
+    # 🔒 受保护环境（人工审批门禁）：这是「持 GH_PAT 发真实 Issue/公告」的唯一出口，
+    #    绑定 environment 后，未获批的运行会在此 job **暂停等待审批**，
+    #    把高权限动作收窄到经授权的主体（尤其对手动触发场景）。
+    #    ⚠️ 需在仓库 Settings → Environments 建同名环境并配置 required reviewers；
+    #       未配置时 jobs 会因 environment 不存在而失败，请一并完成。
+    environment:
+      name: ai-audit-publish
     permissions:
       # 仍保持最小权限：建 Issue 走 GH_PAT，不依赖 GITHUB_TOKEN 写能力
       contents: read
     steps:
       - name: 加固运行器（审计所有出站调用）
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
 
-      - name: 下载审计结论 artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      # ⚠️ v8 起该 action 改用 ESM，且**不再无条件解压**所有下载内容：它先看 Content-Type，
+      #    非压缩包原样落盘（密文三件套本身就是未压缩文件，故落到 /tmp/audit 仍是平铺的文件名，
+      #    与下方 precheck 读取的路径一致）；digest 不匹配默认按 error 失败（安全默认，保留）。
+      - name: 下载加密后的审计结论 artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: audit-verdicts
           path: /tmp/audit
+
+      # ── 空结论短路（必须在解密之前） ───────────────────────────────────────
+      # ⚠️ 顺序很关键：判断「有没有东西要发布」**早于**任何密码学操作。
+      #    成因：triage 在**无 APPROVED 结论**时会正常收尾（兜底把结论写成 `[]`）。
+      #    若「先解密再判空」，一条空结论也会去撞 `AUDIT_HANDOFF_PRIVATE_KEY`：
+      #    Secret 尚未配置时，本 job 会在**毫无可发布内容**的情况下硬失败
+      #    （表现为「CodeQL 跑完 → AI 审计红了」，实际却无事可做），
+      #    既误导排查、又把「首次部署尚未配密钥」误报成链路故障。
+      #    故此处先用**确定性外壳检查**判空——它不碰私钥，与 Secret 是否配置无关。
+      # ✅ 空结果的**唯一**信号是 triage 侧显式外化的标记文件 `audit-verdicts.empty`：
+      #    无 APPROVED 结论时 triage **不加密、不上传任何密文**，artifact 里只有这枚标记；
+      #    有内容时则只有密文三件套、没有标记。两条分支互斥，判据明确、无歧义。
+      # 说明：判空只看「有没有待发布内容」，不解析密文，也不放宽任何完整性要求——
+      #      一旦确有密文需要解密，仍严格走「配对自检 → 验 HMAC → 解密 → 数组校验」。
+      - name: 解密前短路（无待发布结论则跳过，不触碰私钥）
+        id: precheck
+        run: |
+          set -euo pipefail
+          # 1) 显式空结论标记：triage 判定为无 APPROVED 结论时写入（此时 artifact 内无任何密文）
+          if [ -f /tmp/audit/audit-verdicts.empty ]; then
+            echo "triage 已标记本次无 APPROVED 结论（无待发布结论），跳过解密与发文。"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 2) 兼容旧产物 / 兜底：既无标记又无密文，同样视为无待发布结论
+          if [ ! -f /tmp/audit/audit-verdicts.json.enc ]; then
+            echo "无待发布结论（既无 audit-verdicts.empty 标记，也无 audit-verdicts.json.enc 密文），跳过解密与发文。"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 3) 有密文却缺配套材料 → 属产物不完整，明确失败（不猜、不放行）
+          test -f /tmp/audit/audit-verdicts.key.enc \
+            || { echo "缺少封装密钥 audit-verdicts.key.enc" >&2; exit 1; }
+          test -f /tmp/audit/audit-verdicts.json.mac \
+            || { echo "缺少完整性标签 audit-verdicts.json.mac" >&2; exit 1; }
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      # ── 解密审计结论（协调披露的收口） ─────────────────────────────────────
+      # artifact 里只有密文与 HMAC（见 triage job 的加密步骤）；只有本 job 经 Secret
+      # 拿到私钥，是**唯一**能把内容变回可读的一方 —— 这正是「为发布者加密」的落地。
+      # ⚠️ 先**验 HMAC 再解密**：密文被篡改（或 MAC 不匹配）时直接失败，绝不把未认证的
+      #    数据喂给下游建 Issue。仅做「是不是 JSON 数组」的格式检查**不构成**完整性校验。
+      # 若 Secret 缺失或密钥不匹配：明确失败，绝不退化成「明文放行」。
+      - name: 校验完整性并解密审计结论（私钥仅本 job 持有）
+        if: steps.precheck.outputs.skip != 'true'
+        env:
+          AUDIT_HANDOFF_PRIVATE_KEY: ${{ secrets.AUDIT_HANDOFF_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          # 私钥缺失时给出**可照做**的修复指引，而不是一句干巴巴的报错：
+          #   密钥对必须「公钥入库 + 私钥进 Secret」两步成对完成，只做一半必然解密失败。
+          if [ -z "${AUDIT_HANDOFF_PRIVATE_KEY:-}" ]; then
+            {
+              echo "缺少仓库 Secret AUDIT_HANDOFF_PRIVATE_KEY，无法解密审计结论（已按设计明确失败，不降级为明文放行）。"
+              echo ""
+              echo "修复步骤（密钥对必须成对配置，只配一半必然失败）："
+              echo "  1) 本地生成 3072 位密钥对："
+              echo "       openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out handoff-private.pem"
+              echo "       openssl rsa -in handoff-private.pem -pubout -out handoff-public.pem"
+              echo "  2) 用新公钥替换仓库内占位公钥并提交："
+              echo "       cp handoff-public.pem ai-audit/handoff-public-key.pem"
+              echo "  3) 把**私钥全文**存入 Secret（Settings → Secrets and variables → Actions → New secret）："
+              echo "       Name: AUDIT_HANDOFF_PRIVATE_KEY"
+              echo "       Value: handoff-private.pem 的完整内容"
+              echo "  4) 用后立即销毁本地私钥：shred -u handoff-private.pem"
+              echo ""
+              echo "详见 ai-audit/README.md「加密交接：生成密钥对并注入私钥」一节。"
+            } >&2
+            exit 1
+          fi
+          umask 077
+          # 把私钥落到临时文件（Secret 不入命令行，避免进程列表泄漏）
+          KEYFILE="$(mktemp)"
+          printf '%s\n' "$AUDIT_HANDOFF_PRIVATE_KEY" > "$KEYFILE"
+          # 1) 用私钥解出「加密密钥 + MAC 密钥」JSON（RSA-OAEP-SHA256）
+          #    ⚠️ 这一步同时充当**密钥配对自检**：能解开封装密钥，才说明本 Secret 里的私钥
+          #       确实与 triage 用的仓库公钥配对。错配（如换了公钥却没换私钥，或反之）
+          #       会在此失败——那属于**配置错误**，不是密文被篡改，故单独给出可照做的指引，
+          #       避免把「密钥没换完」误诊成「artifact 被篡改」。
+          KEYS="$(mktemp)"
+          if ! openssl pkeyutl -decrypt -inkey "$KEYFILE" \
+               -in /tmp/audit/audit-verdicts.key.enc -out "$KEYS" \
+               -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256; then
+            {
+              echo "私钥无法解开封装密钥：Secret AUDIT_HANDOFF_PRIVATE_KEY 与仓库内"
+              echo "ai-audit/handoff-public-key.pem 不是同一对（或将私钥配错/配了占位值）。"
+              echo ""
+              echo "修复步骤（公钥与私钥必须同源、成对更新）："
+              echo "  1) 重新生成一对：openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out handoff-private.pem"
+              echo "                   openssl rsa -in handoff-private.pem -pubout -out handoff-public.pem"
+              echo "  2) 公钥提交入库：cp handoff-public.pem ai-audit/handoff-public-key.pem"
+              echo "  3) 私钥全文更新到 Secret：AUDIT_HANDOFF_PRIVATE_KEY"
+              echo ""
+              echo "⚠️ 轮换顺序：先暂停触发并等待现有运行结束 → 更新公钥 → 更新私钥 → 验证配对 → 恢复触发。"
+              echo "   中途运行会「旧公钥加密、新私钥解密」而失败（见 ai-audit/README.md 密钥轮换）。"
+            } >&2
+            shred -u "$KEYFILE" "$KEYS" 2>/dev/null || rm -f "$KEYFILE" "$KEYS"
+            exit 1
+          fi
+          ENC_KEY="$(jq -er '.enc_key' "$KEYS")" \
+            || { echo "封装密钥解开后缺少 enc_key 字段，拒绝继续。" >&2; exit 1; }
+          MAC_KEY="$(jq -er '.mac_key' "$KEYS")" \
+            || { echo "封装密钥解开后缺少 mac_key 字段，拒绝继续。" >&2; exit 1; }
+          # 2) 【先验完整性】对密文重算 HMAC-SHA256 并与交付的标签做**定长比较**
+          #    ⚠️ 必须在解密之前：CBC 无完整性，篡改密文会导致「可预测的明文损坏」，
+          #       只有 MAC 通过才说明这份密文确实出自持有合法公钥的 triage。
+          EXPECT_MAC="$(printf '%s' "$MAC_KEY" | openssl dgst -sha256 -mac HMAC -macopt hexkey:"$MAC_KEY" -binary /tmp/audit/audit-verdicts.json.enc | od -An -v -tx1 | tr -d ' \n')"
+          ACTUAL_MAC="$(od -An -v -tx1 /tmp/audit/audit-verdicts.json.mac | tr -d ' \n')"
+          if [ "$EXPECT_MAC" != "$ACTUAL_MAC" ]; then
+            echo "HMAC 校验失败：artifact 密文可能被篡改，拒绝解密与发文。" >&2
+            shred -u "$KEYFILE" "$KEYS" 2>/dev/null || rm -f "$KEYFILE" "$KEYS"
+            exit 1
+          fi
+          # 3) 用数据密钥解出结论明文
+          printf '%s' "$ENC_KEY" > /tmp/.audit-dec.key
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+            -in /tmp/audit/audit-verdicts.json.enc \
+            -out /tmp/audit/audit-verdicts.json -pass file:/tmp/.audit-dec.key
+          # 4) 立即清除私钥临时文件与密钥材料
+          shred -u "$KEYFILE" "$KEYS" /tmp/.audit-dec.key 2>/dev/null \
+            || rm -f "$KEYFILE" "$KEYS" /tmp/.audit-dec.key
+          # 5) 防御：解密结果必须是合法 JSON 数组（信任边界格式校验，非完整性校验）
+          jq -e 'type == "array"' /tmp/audit/audit-verdicts.json > /dev/null \
+            || { echo "解密后的结论不是 JSON 数组，拒绝继续" >&2; exit 1; }
+          echo "完整性校验通过，解密完成，结论条数：$(jq 'length' /tmp/audit/audit-verdicts.json)"
 
       # ── 非智能体门禁（deterministic gate） ──────────────────────────────────
       # 本 step 是「是否创建 Issue」的**唯一**放行点，且**全程不含任何 LLM**：
@@ -254,13 +504,16 @@ jobs:
       #    本门禁确定性保证的是「结论 → 发文」这一段——只认 APPROVED 字段，不做二次模型判断。
       #    故**不要**宣称「被驳回的误报绝无可能被创建」，只能说「非 APPROVED 的告警不可能被创建」。
       # GH_PAT 仅在本 step 注入，且只用于 GitHub API 建 Issue。
+      # ⚠️ 与解密步骤共用 precheck 短路条件：无待发布结论时本步**直接跳过**，
+      #    连 GH_PAT 都不必读取（避免「无内容可发却先校验令牌」的无谓失败）。
       - name: 按审计结论创建 Issue（幂等 + 并发自愈）
+        if: steps.precheck.outputs.skip != 'true'
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          : "${GH_PAT:?请配置仓库 Secret GH_PAT 以创建 Issue}"
+          : "${GH_PAT:?请配置仓库 Secret GH_PAT 以创建 Issue（详见 ai-audit/README.md 所需 Secrets 表）}"
           FILE=/tmp/audit/audit-verdicts.json
           if [ ! -f "$FILE" ]; then echo "无结论文件，跳过"; exit 0; fi
           # 防御：结论文件必须是合法 JSON 数组，否则直接失败（不猜测、不放行）
@@ -282,6 +535,39 @@ jobs:
           # 幂等指纹仍写在**公开 Issue**正文里（HTML 注释），保证去重逻辑不变。
           FINGERPRINT_PREFIX="<!-- ai-audit-alert:"
 
+          # ── 告警来源校验（provenance check，发文前的信任边界） ────────────────
+          # 威胁：artifact 虽已用公钥加密（防读），但**不构成来源可信**——若上游加密
+          #       环节被换掉/伪造，或手误产出一条「看着 APPROVED」的结论，仅凭
+          #       `status == "APPROVED"` 就去建 Issue，等于信任一条未经核对的告警编号。
+          # 对策：建任何 GitHub 资源**之前**，用只读的 Code Scanning API 以
+          #       `alert_number` 回查**权威告警**，逐字段核对 rule.id 与 location.path。
+          #       三者不一致（编号不存在 / 规则或路径对不上）即判定「非可信 CodeQL 告警」，
+          #       跳过该条、不建公告也不建 Issue。
+          # ⚠️ 校验失败（含 API 报错）一律**返回非 0**，由调用方 abort，绝不「当作没问题放行」。
+          verify_alert_provenance() {
+            local alert="$1" rule="$2" path="$3" body
+            # 只接受纯数字告警编号：杜绝把 `1` / `../` 之类拼进 URL 路径
+            case "$alert" in
+              ''|*[!0-9]*) echo "告警编号非法（应为纯数字）：${alert}" >&2; return 1 ;;
+            esac
+            body="$(curl -fsSL -H "${AUTH_HEADER}" -H "${ACCEPT_HEADER}" \
+              "${API}/repos/${REPO}/code-scanning/alerts/${alert}")" \
+              || { echo "拉取权威告警 #${alert} 失败（可能不存在或无权读取）" >&2; return 1; }
+            jq -e 'type == "object"' <<<"$body" >/dev/null \
+              || { echo "权威告警 #${alert} 响应非 JSON 对象，拒绝继续" >&2; return 1; }
+            # 逐字段核对：规则 id（回退 description）与实例文件路径必须与结论一致
+            local ok
+            ok="$(jq -r --arg r "$rule" --arg p "$path" '
+              ((.rule.id // .rule.description // "") == $r)
+              and ((.most_recent_instance.location.path // "") == $p)
+            ' <<<"$body")"
+            if [ "$ok" != "true" ]; then
+              echo "权威告警 #${alert} 的 rule/path 与结论不一致（结论：rule=${rule} path=${path}），判定为非可信来源，跳过。" >&2
+              return 1
+            fi
+            return 0
+          }
+
           # 去重检索的翻页硬上限：两个 find_* 辅助函数共用。
           # ⚠️ 这不是「防御性摆设」——去重循环的退出条件是「取到空页」或「不足一页」，
           #    完全依赖上游如实翻页。若 API 被代理/网关异常接管、持续返回整页（或
@@ -294,12 +580,13 @@ jobs:
           # 是否存在「带该指纹」的 Issue：**须翻页遍历全部 open Issue**。
           # ⚠️ 只取 `?per_page=100` 首页会漏判：open Issue 超 100 条时，排在 100 名
           #    之后的既有 Issue 查不到 → 误判「不存在」→ 重复创建。这里逐页拉取直到取空。
+          #
+          # 退出码契约：0 = 查完了（stdout 为编号或空串）；2 = **不可恢复**（去重判据
+          # 不可信，调用方必须停下，否则会把「查不到」当成「不存在」而重复建 Issue）。
           find_issue_by_fingerprint() {
             local fp="$1" page=1 found=""
             while : ; do
               # 翻页硬上限：防上游异常时无限翻页（详见 MAX_DEDUPE_PAGES 注释）。
-              # 此处失败返回 2（不可恢复）——去重判据不可信时**必须**让调用方停下，
-              # 否则会把「查不到」当成「不存在」而重复建 Issue。
               if [ "$page" -gt "$MAX_DEDUPE_PAGES" ]; then
                 echo "open Issue 翻页超过硬上限 ${MAX_DEDUPE_PAGES} 页仍未取完，疑似上游异常，停止发布" >&2
                 return 2
@@ -328,36 +615,17 @@ jobs:
           # ── 私密公告的去重判据：用 advisory 标题里的告警指纹 ──────────────────────
           # 公告标题固定为 `AI审计：CodeQL 告警 #<alert_number>`，先查是否已建同号公告，
           # 命中则跳过，避免同一条告警重复开公告（公告写接口非幂等）。
+          # ⚠️ 必须**精确等于**完整标题，不可用 `contains("告警 #1")`：后者会把
+          #    `#10` / `#100` 也判为命中，导致「复用别人的公告、本告警却没落细节」。
           #
-          # 退出码契约（调用方据此区分两种结局）：
-          #   0 = 查询成功：stdout 为 ghsa_id（已存在）或空串（未找到，可安全新建公告）
-          #   1 = 查询失败（curl 失败 / 响应非 JSON 数组 / 超翻页上限，如 PAT 缺公告读权限）：
-          #       stdout 为**诊断文本**（非 ghsa_id），调用方必须**先赋值、再按退出码分流**
-          #       （`if X="$(fn)"` 会因条件上下文关闭 `errexit` 而把诊断当成 ID 用）。
+          # 退出码契约：0 = 查询成功（stdout 为 ghsa_id 或空串）；1 = **可恢复**失败
+          # （只影响本条告警，调用方跳过该条、继续处理后续）。
           # ⚠️ 失败必须与「查不到」区分开：前者说明去重判据不可信，绝不能吞成空串
           #    （那会对同一条告警重复创建公告，公告写接口非幂等）。
-          # ⚠️ 但失败也**不得**让调用方终止整个 job：列公告失败只影响**本条**告警，
-          #    后续告警的去重判断与它无关。故本函数只**如实回报失败**，由调用方
-          #    决定「跳过该条、继续处理后续」（见调用处的处理约定）。
-          #
-          # 实现要点（`set -euo pipefail` 下的两层自保，缺一会逃逸成 job 级退出）：
-          #   ① 循环体末尾统一 `return 0`：所有能走到末尾的路径（取空页、取满页）都是
-          #      正常收尾，裸 `break`/落到函数尾会返回循环里最后一条命令的退出码，
-          #      反而把「查完了没找到」误报成失败；
-          #   ② 每处失败都 `return 1`（**不是** `return 2`）：`return N`（N>0）本身是
-          #      一条会「失败」的命令，在 `set -e` 下若调用方用裸赋值 `X="$(fn)"`，
-          #      会立刻终止 shell——而 `set -e` 对退出码 2 与 1 一视同仁，用 2 毫无
-          #      收益，只在语义上误导。故本函数失败一律返回 1，提示的强弱交给调用处；
-          #   ③ 翻页设硬上限（MAX_DEDUPE_PAGES）：退出条件依赖「取到空页」，上游若
-          #      异常地持续返回整页，循环会一直翻到 job 超时。
-          # ⚠️ 与 find_issue_by_fingerprint 的**唯一**语义差别：本函数失败返回 1
-          #    表示「可恢复」——调用方跳过该条告警继续；后者返回 2 表示「不可恢复」——
-          #    调用方必须停下，因为贸然建 Issue 会造成重复。
           find_advisory_by_alert() {
             local alert="$1" page=1 found=""
             while : ; do
-              # 翻页硬上限：与 find_issue_by_fingerprint 同源防护。此处失败返回 1
-              # （可恢复：只跳过该条告警），交给调用方继续处理后续告警。
+              # 翻页硬上限：与 find_issue_by_fingerprint 同源防护。
               if [ "$page" -gt "$MAX_DEDUPE_PAGES" ]; then
                 echo "security advisory 翻页超过硬上限 ${MAX_DEDUPE_PAGES} 页仍未取完，疑似上游异常" >&2
                 return 1
@@ -371,14 +639,13 @@ jobs:
               local n
               n="$(jq 'length' <<<"$batch")"
               [ "$n" -eq 0 ] && break
-              found="$(jq -r --arg a "告警 #${alert}" \
-                '[.[] | select((.summary // "") | contains($a))]
+              found="$(jq -r --arg s "AI审计：CodeQL 告警 #${alert}" \
+                '[.[] | select((.summary // "") == $s)]
                  | if length > 0 then (.[0].ghsa_id // "") else "" end' <<<"$batch")"
               [ -n "$found" ] && { printf '%s' "$found"; return 0; }
               [ "$n" -lt 100 ] && break
               page=$((page + 1))
             done
-            # 查完了（空页或不足一页）仍未命中：成功返回空串，由调用方安全新建公告。
             return 0
           }
 
@@ -387,10 +654,9 @@ jobs:
           # 成因：alert_number 会被拼进**公开 Issue 标题**、去重指纹与正文；若只要求
           #   「非空」，则格式错误或受提示词影响的任意文本（**含漏洞详情**）都会被当作
           #   编号发布到公开 Issue，违反 SECURITY.md 的协调披露约定。故在**进入计数与
-          #   循环之前**就用 POSIX 字符类 `^[0-9]+$` 硬过滤掉一切非法值。
-          #   同时把该条**逐条告警**（含编不清的编号，用 `?` 占位）打到 stderr，
-          #   避免「静默丢弃」——维护者需要知道有结论被守卫拦下了。
-          # 实现复用 scripts/validate-alert-number.sh，保证与 publish 阶段同一判据。
+          #   循环之前**就用 POSIX 字符类 `^[0-9]+$` 硬过滤掉一切非法值，
+          #   同时把被拦下的条目逐条打到 stderr，避免「静默丢弃」。
+          # 实现复用 scripts/validate-alert-number.sh，保证与发布阶段同一判据。
           # ⚠️ jq 的 `test()` 默认语义受 locale 影响，故这里用 `^[0-9]+$` 而非 `\\d`；
           #    再叠加 shell 侧守卫做**双保险**（jq 只负责粗筛，shell 负责最终裁决）。
           REJECTED="$(jq '[.[] | select(.status=="APPROVED")
@@ -444,45 +710,25 @@ jobs:
               TITLE="[AI审计] CodeQL 告警 #${ALERT}"
               FINGERPRINT="${FINGERPRINT_PREFIX}${ALERT} -->"
 
+              # ── ⓪ 来源校验：建任何 GitHub 资源**之前**，用权威 API 回查该告警 ─────────
+              # 不信任 artifact 里的 APPROVED 标记本身，只认「能在本仓库 Code Scanning
+              # 里按 alert_number 查到、且 rule/path 逐字段一致」的告警，杜绝伪造结论发文。
+              if ! verify_alert_provenance "$ALERT" "$RULE" "$PATH_"; then
+                echo "跳过非可信来源的告警：#${ALERT}" >&2
+                SKIPPED=$((SKIPPED + 1))
+                continue
+              fi
+
               # ── ① 先投私密公告（承载细节），未成功则**不建公开 Issue** ─────────────
               # 顺序很关键：先确保细节有私密落点，再建公开占位；否则一旦公告写入失败
               # 而公开 Issue 已建，就会出现「公开无细节、私密无记录」的悬空跟踪项。
-              # ⚠️ 必须区分「查询成功但未找到」与「查询出错」：
-              #    前者返回空串（可安全新建公告），后者返回非 0（**必须跳过该条告警**）。
-              #    若像以往那样用 `|| true` 把出错一并吞成空串，API 报错 / 响应校验失败
-              #    会被误判为「未找到」→ 对同一条告警重复创建公告（公告写接口非幂等）。
-              # 为何这里「跳过该条」而非 `exit 1`：列公告失败（典型如 GH_PAT 缺
-              # `Repository security advisories` 读权限）只影响**本条**告警的公告去重；
-              # 在 `set -euo pipefail` 下让失败逃逸会直接终止整个 publish job，
-              # 导致后续告警既不建公告也不建 Issue。故交还控制权给逐条循环，
-              # 只跳过受影响的那条（详见 find_advisory_by_alert 的退出码契约）。
-              # 同理，下文的公告**创建**失败也必须接住：那是个含 `curl -f` 的管道赋值，
-              # 裸写在 `set -euo pipefail` 下同样会掀翻整个 job。
-              #
-              # 🔒 两处硬约束，改坏任一条都会让「权限缺失 = 整批告警白跑」复现：
-              #   ① **stdout 与退出码不可混用**：本函数的「诊断信息」是写进 stdout 的
-              #      （见函数内 `echo ...`），若用 `if ! ADVISORY_ID="$(fn)"` 取值，
-              #      `if` 条件上下文关闭 `errexit`，脚本会继续执行且 `ADVISORY_ID`
-              #      已被写入诊断文本 → 被当作「已有公告 ID」嵌进公开 Issue 正文。
-              #      故必须「先无条件赋值、再由退出码分流」（本处写法）。
-              #   ② 赋值右侧**禁止**加 `|| true`：它会吞掉退出码，使判定恒为「成功」、
-              #      查询失败被误判成「未找到」→ 重复创建公告（公告写接口非幂等）。
-              if ADVISORY_LOOKUP="$(find_advisory_by_alert "$ALERT")"; then
-                # ✅ 通道一（0 = 查询成功）：stdout 即判据——空串表示未找到，可安全新建公告。
-                ADVISORY_ID="$ADVISORY_LOOKUP"
-              else
-                # ❌ 通道二（非 0 = 查询失败）：stdout 此时已包含「第 N 页失败 / 非 JSON 数组 /
-                #    超翻页上限」等**由函数写入的 stdout 诊断**，绝不能误当成 ghsa_id 使用，
-                #    也不能被 `if X=...` 条件上下文（局部关闭 `set -e`）静默吞掉：
-                #    必须自己落日志 + 跳过该条告警，否则权限缺配会连一条诊断都不留。
-                # ⚠️ 为何不写成 `if ! ADVISORY_ID="$(fn)"`：`if` 条件位置会关闭 `errexit`，
-                #    查询失败时脚本**会继续执行**，而 `ADVISORY_ID` 已被那条失败命令写入
-                #    诊断文本 → 被当作「已存在的公告 ID」直接嵌进公开 Issue 正文。故必须用
-                #    「先赋值、再由退出码分流」这唯一正确的写法（stdout 与退出码不可混用）。
-                ADVISORY_DIAG="$ADVISORY_LOOKUP"
-                echo "无法列私密公告以做去重（告警 #${ALERT}），跳过该条（不建公告、不建公开 Issue）：${ADVISORY_DIAG}" >&2
-                SKIPPED=$((SKIPPED + 1))
-                continue
+              # ⚠️ 去重查询失败**必须区分于「查无结果」**：若把失败当成空结果，一次瞬时
+              #    网络抖动就会让本步误判「无同名公告」而重复 POST（公告接口非幂等）。
+              #    故这里**不吞错**：查询失败即 abort 整条流水线（下次重跑可自愈），
+              #    只有当查询**成功且确无命中**时才继续去创建。
+              if ! ADVISORY_ID="$(find_advisory_by_alert "$ALERT")"; then
+                echo "私密公告去重查询失败（告警 #${ALERT}），中止本次发布以避免重复创建。" >&2
+                exit 1
               fi
               if [ -z "$ADVISORY_ID" ]; then
                 # 说明：一次成型成 payload，**不要**先把 description 单独 jq 成字符串再
@@ -495,28 +741,12 @@ jobs:
                   '{summary:$summary,
                     description:("## 漏洞概述\n\n\($r)\n\n## 关联 CodeQL 告警\n\n- 告警编号：\($a)\n- 规则：\($ru)\n- 文件：\($p)\n\n## 处置约定\n\n- 本公告为 AI 审计自动创建的**私密**安全公告，仅维护者可见，用于在协调披露期内跟踪未修复漏洞。\n- 修复发布后，请按 SECURITY.md 的协调披露约定致谢并公开必要信息。"),
                     severity:"medium", vulnerabilities:[]}')"
-                # ⚠️ 必须放在 `if !` 条件里赋值：管道含 `curl -f`，一旦创建被拒
-                #    （如 GH_PAT 缺公告写权限返回 403/404），`set -euo pipefail` 会让
-                #    这个裸赋值直接终止整个 job，导致后续告警全部不被处理。放进条件
-                #    上下文后失败走下面的跳过分支，控制权交还逐条循环。
-                # ⚠️ 判据必须是**退出码**，不能只判「结果为空」：
-                #    公告被拒（403/404，如 GH_PAT 缺公告写权限）时 `curl -f` 退出非 0，
-                #    但响应体里常带 JSON（如 `{"message":"Not Found"}`），经 `jq -r '.ghsa_id // ""'`
-                #    会得到空串、退出码却是 0。若只判空串，`set -euo pipefail` 会在管道
-                #    失败处直接掀翻整个 job（`pipefail` 让管道退出码非 0），后续告警全不被处理。
-                #    `if ! X="$(... | jq ...)"` 把管道放进条件上下文，失败不触发 `errexit`，
-                #    由下面的跳过分支消化——这才是「公告创建失败 → 跳过该条、继续下一条」。
-                if ! ADVISORY_ID="$(curl -fsSL -X POST -H "${AUTH_HEADER}" \
+                ADVISORY_ID="$(curl -fsSL -X POST -H "${AUTH_HEADER}" \
                   -H "${ACCEPT_HEADER}" \
                   "${API}/repos/${REPO}/security-advisories" \
-                  -d "$ADVISORY_PAYLOAD" | jq -r '.ghsa_id // ""')"; then
-                  echo "私密公告创建失败（请求被拒或响应不可解析），跳过该告警（不建公开 Issue）：#${ALERT}" >&2
-                  SKIPPED=$((SKIPPED + 1))
-                  continue
-                fi
-                # 补一道空值兜底：请求成功但响应里没有 ghsa_id（异常响应），同样不能建公开 Issue。
+                  -d "$ADVISORY_PAYLOAD" | jq -r '.ghsa_id // ""')"
                 if [ -z "$ADVISORY_ID" ] || [ "$ADVISORY_ID" = "null" ]; then
-                  echo "私密公告创建返回了空 ghsa_id，跳过该告警（不建公开 Issue）：#${ALERT}" >&2
+                  echo "私密公告创建失败，跳过该告警（不建公开 Issue）：#${ALERT}" >&2
                   SKIPPED=$((SKIPPED + 1))
                   continue
                 fi
@@ -527,9 +757,8 @@ jobs:
               # 第一道去重（乐观预检）：命中即跳过，省下一次创建调用。
               # 注意：并发窗口下这一步只是「快速路径」，**不是**正确性保证，
               #       正确性由后续的创建后自愈兜底（见下）。
-              # ⚠️ 同①：查询出错必须停止发布，否则会把「查不到」误判成「不存在」而重复建 Issue。
               if ! EXIST="$(find_issue_by_fingerprint "$FINGERPRINT")"; then
-                echo "查询既有 Issue 失败（告警 #${ALERT}），停止发布以避免重复创建" >&2
+                echo "公开 Issue 去重查询失败（告警 #${ALERT}），中止以避免重复创建。" >&2
                 exit 1
               fi
               if [ -n "$EXIST" ]; then
@@ -567,10 +796,8 @@ jobs:
               # 到唯一一条 open Issue，无需人工清理。
               # 说明：本工作流已用 concurrency 串行化，此处自愈属**纵深防御**——
               #       即便未来有人去掉 concurrency 或 GitHub 偶发重放，也能自愈。
-              # ⚠️ 同①②：查询出错不得静默当作「无并发重复」——那会放过真实的重复 Issue。
-              #    此处 Issue 已创建，无法回滚，故以非 0 退出让 job 失败，由维护者介入核对。
               if ! DUP_OF="$(find_issue_by_fingerprint "$FINGERPRINT")"; then
-                echo "自愈查询失败（已创建 #${NEW_ID}，告警 #${ALERT}），停止以避免漏判重复" >&2
+                echo "创建后自愈复查失败（告警 #${ALERT}），中止以避免残留重复。" >&2
                 exit 1
               fi
               if [ -n "$DUP_OF" ] && [ "$DUP_OF" != "$NEW_ID" ] \
