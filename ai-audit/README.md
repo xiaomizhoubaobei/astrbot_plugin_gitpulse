@@ -45,8 +45,16 @@ LLM + Taskflow Agent 逐个审计
 
 > 🔒 **安全设计：审计与创建 Issue 分离（pwn-request 防护）**
 > `ai-audit-scheduled.yml` 把流程拆成**两个 job**，中间只以 **artifact（纯数据）** 传信：
-> - `triage` job：**不持有任何仓库写凭据**（无 `GH_PAT`），仅在**可信 ref**（手动触发的本次 ref
->   或默认分支）上检出源码，产出结论文件 `audit-verdicts.json`；
+> - `triage` job：**不持有 `GH_PAT`**（唯一由本工作流主动注入的仓库写凭据均不在本 job），仅在**可信 ref**（手动触发的本次 ref
+>   或默认分支）上检出源码，产出结论文件 `audit-verdicts.json`。
+>   ⚠️ 但它**并非「无任何 Secret」**：为调用 LLM 分流与读取 CodeQL 告警，它实际注入
+>   `AI_API_ENDPOINT` / `AI_API_TOKEN` / `AI_MODEL_NAME`、只读 `GITHUB_TOKEN` 与可选的 `MCP_CONFIG`；
+>   其中 `AI_*` 凭据仅用于调用 LLM、`GITHUB_TOKEN` 已被显式收紧为只读，二者**不具备仓库写能力**；
+>   `GH_PAT` 则被完全排除在本 job 之外。
+>   ⚠️ 唯一的例外是**可选的 `MCP_CONFIG`**：它是一份 MCP Server 配置，其中可能内嵌**由使用者自行提供**的
+>   GitHub 凭据，其权限范围**不受本工作流约束**（本工作流既无法读取、也无法收紧它）。因此本 job「无仓库写能力」
+>   这一结论**仅在把 `MCP_CONFIG` 内嵌凭据也配置为只读时成立**；若你为其配了写权限令牌，请自行承担由此扩大的暴露面
+>   （更稳妥的做法是干脆不配 `MCP_CONFIG`，仅用只读 `GITHUB_TOKEN` 读取告警）。
 > - `publish` job：**唯一持有 `GH_PAT` 的 job**，**不检出/不执行任何源码**，只消费 artifact 里
 >   的结构化结论按白名单字段建 Issue。
 >
@@ -107,7 +115,7 @@ ai-audit/
 | `seclab-taskflow-agent` 框架 | 需部署框架本体 | ❌ 需部署 |
 | LLM 模型（支持函数调用） | 任意 OpenAI 兼容上游：DeepSeek / 通义千问 / Moonshot / 本地 vLLM 等 | ❌ 需配置（`AI_API_ENDPOINT` + `AI_API_TOKEN`） |
 | GitHub PAT（读告警） | 审计侧只读拉取 CodeQL 告警用（`security_events` 读权限即可） | ❌ 需你提供 |
-| GitHub PAT（写 Issue） | 仅 `publish` job 创建真实 Issue 用（`repo/issues` 写权限） | ❌ 需你提供 |
+| GitHub PAT（写 Issue + 私密公告） | 仅 `publish` job 创建真实 Issue 与私密安全公告用（`issues` 写 + `Repository security advisories` **读+写**，二者**不通用**；只缺后者时该条告警被跳过，见文末「逐条容错」） | ❌ 需你提供 |
 | MCP Server（GitHub API） | 框架可选的信息收集能力（只读） | ⭕ 可选 |
 
 ---
@@ -242,21 +250,33 @@ hatch run main -t ai_audit.alert_triage_example \
 | `AI_API_ENDPOINT` | ✅ | 上游 base_url（OpenAI 兼容口，如 `https://api.deepseek.com/v1`，或本地 vLLM / Ollama 的 OpenAI 兼容地址） |
 | `AI_API_TOKEN` | ✅ | 对应厂商的 API Key（需支持函数调用） |
 | `AI_MODEL_NAME` | ✅ | 实际调用的模型名（如 `deepseek-v4-flash` / `qwen-max` / `kimi-k2` 等）。工作流运行时将其透传给框架的 `COPILOT_DEFAULT_MODEL` 环境变量 |
-| `GH_PAT` | ✅ | GitHub PAT，需 `repo/issues` 写权限（创建真实 Issue）。**仅注入 `publish` job**，`triage` job 绝不接触该 Secret |
-| `MCP_CONFIG` | 可选 | MCP Server（GitHub API）配置 |
+| `GH_PAT` | ✅ | GitHub PAT，需 `issues` 写权限（创建公开跟踪 Issue）**以及** `Repository security advisories` 读+写权限（查询与创建私密安全公告，`GET`/`POST /repos/{owner}/{repo}/security-advisories`）。两者**不通用**，缺后者会导致公告查询/创建被拒，**该条告警被跳过**（不建公告也不建公开 Issue），其余告警继续正常处理。**仅注入 `publish` job**，`triage` job 绝不接触该 Secret |
+| `MCP_CONFIG` | 可选 | MCP Server（GitHub API）配置。⚠️ 其中可能内嵌**你自行提供**的 GitHub 凭据，其权限范围**不受本工作流约束**；若要用，请务必配成**只读**，否则 `triage` job 将不再满足「无仓库写能力」 |
 
 > 📌 框架只识别 `AI_API_ENDPOINT` / `AI_API_TOKEN`（即 `AsyncOpenAI(base_url=..., api_key=...)`），
 > 不读取 `OPENAI_API_KEY` / `OPENAI_MODEL`。模型名通过环境变量 `COPILOT_DEFAULT_MODEL` 提供
 > （由仓库 Secret `AI_MODEL_NAME` 透传），`model_config.yaml`（`-m ai_audit.model_config`）仅声明
 > `api_type: chat_completions`（OpenAI 兼容标准协议）。
 
-> ⚠️ 由于示例会为真实漏洞**创建 Issue**，`GH_PAT` 必须具有仓库的 `issues` 写权限，
-> 否则 `publish` job 会失败（可把 `publish` job 整体注释掉，降级为只产出审计结论）。
+> ⚠️ 由于示例会为真实漏洞**创建公开 Issue 与私密安全公告**，`GH_PAT` 必须**同时**具有：
+> ① 仓库的 `issues` 写权限（建公开 Issue）；② 细粒度 PAT 的 **`Repository security advisories` 读+写权限**
+> （**查询**与创建私密公告，对应 `GET`/`POST /repos/{owner}/{repo}/security-advisories`）。
+> ⚠️ **读权限与写权限必须一起给**：查询是逐条构建内容前的第一道去重，缺读权限时无法判断
+> 该告警是否已开过公告，只能按「宁可跳过、不可重复」处理。
+> **这两项权限不通用**：仅授予 `issues` 写时，列公告去重与创建公告都会返回 403/404。
+> 此时 `publish` job **不再整体失败**——受影响的**该条**告警被跳过（既无公告也无公开 Issue），
+> 控制权交还给逐条处理循环，后续告警继续走完「公告 → 公开 Issue」全流程；
+> 全部告警处理完后正常退出，并在结尾汇总里计入「跳过 N 条」。
+> 缺任一权限时，可把 `publish` job 整体注释掉，降级为只产出审计结论。
 > 🔒 `GH_PAT` 只在 `publish` job 的建 Issue 步骤注入；`triage` job 全程不接触它，
-> 因此即便审计对象被污染，也无凭据可被滥用。
+> 因此即便审计对象被污染，也无可写仓库的凭据可被滥用。
 > 🔒 `GH_PAT` **无需** `security_events` 读权限：读取 CodeQL 告警由 `triage` job 的
 > 只读 `GITHUB_TOKEN`（`security-events: read`）完成，`GH_PAT` 仅用于 `publish` job
 > 调用 Issue 与 security-advisory API，从而保持最小权限边界。
+> ⚠️ 仍需注意：`triage` 会接触 `AI_API_TOKEN` / 只读 `GITHUB_TOKEN` / 可选 `MCP_CONFIG`
+> （详见上方安全设计小节）。安全前提是「**`AI_*` 与只读 `GITHUB_TOKEN` 不具备仓库写能力**
+> + 仅在可信 ref 检出源码 + **`MCP_CONFIG` 若启用，其内嵌 GitHub 凭据已自行配为只读**」——
+> `MCP_CONFIG` 的凭据范围不受本工作流约束，是本 job「无仓库写能力」结论成立的必要附加条件。
 
 > 首次使用建议先 `workflow_dispatch` 手动跑一次，确认链路正常后再依赖自动触发。
 
@@ -325,6 +345,46 @@ hatch run main -t ai_audit.alert_triage_example \
   > 边界说明：本守卫只保证「进入公开渠道的编号一定是正整数」，**不**校验编号是否真实存在
   > （那是 GitHub API 的职责）；编号真实但不存在时，公开 Issue 仍会建出（占位跟踪），
   > 只是私密公告创建会失败并跳过——这属预期，不构成信息披露。
+- **单条告警失败不拖垮整批（逐条容错）**：`publish` 的逐条循环对**可恢复的单点失败**
+  一律 `continue` 跳过该条并计入 `SKIPPED`，而非让 `set -euo pipefail` 终止整个 job：
+  1. **列私密公告失败**（典型为 `GH_PAT` 缺 `Repository security advisories` 读权限，
+     或 API 临时 5xx）：此时无法判断该告警的公告是否已存在，**跳过该条**
+     （不建公告、也不建公开 Issue），控制权交还循环，后续告警继续正常处理；
+     > 🔧 实现要点（改动能被复现的坑）：`find_advisory_by_alert` 的「诊断信息」是写进
+     > **stdout** 的，故调用处**不能**写成 `if ! ADVISORY_ID="$(find_advisory_by_alert ...)"`——
+     > `if` 条件上下文会关闭 `errexit`，脚本在查询失败后**继续执行**，而 `ADVISORY_ID`
+     > 已被那条失败命令写入诊断文本，会被当成「已存在的公告 ID」直接嵌进公开 Issue 正文
+     > （比 job 失败更糟：产出一条内容错误的公开 Issue）。正确写法是
+     > **「先无条件赋值、再由退出码分流」**（`if X="$(fn)"; then ... else 跳过 fi`）。
+     > 同理，赋值右侧**禁止**加 `|| true`：它会吞掉退出码，把「查询失败」抹成空串，
+     > 于是被误判为「未找到」→ 重复创建公告（公告写接口非幂等）。
+     > ⚠️ 「跳过」而不是「终止 job」是**刻意**的取舍：该失败只影响本条告警，
+     > 后续告警的去重判断完全独立。若在此终止，一次权限缺配就会让**整批**告警
+     > 既不建公告也不建 Issue，而维护者只能看到一句「job failed」，无从得知
+     > 哪些告警被漏处理。跳过则把损失限定在受影响的那几条，并在结尾汇总里可数。
+     > 与之相对，「查既有 Issue 失败」仍然是 `exit 1`（见下）——那是**全量**语义的判据，
+     > 无法只用「跳过该条」表达。
+  2. **创建私密公告失败**（如只有 `issues` 写而无公告写权限）：同样跳过该条，
+     不会建出「公开无细节、私密无记录」的悬空跟踪项；
+     > 🔧 判据必须是**退出码**，不能只判「结果为空」：公告被拒（403/404）时 `curl -f`
+     > 退出非 0，但响应体常是 JSON（如 `{"message":"Not Found"}`），经 `jq -r '.ghsa_id // ""'`
+     > 会得到空串、退出码却是 0。若只看空串，`pipefail` 会让管道失败处直接终止整个 job，
+     > 后续告警全不被处理。故必须把管道放进 `if ! X="$(... | jq ...)"` 条件里判退出码，
+     > 失败走跳过分支；另外补一道「退出码 0 但 `ghsa_id` 为空/`null`」的兜底。
+  3. **`alert_number` 守卫拦截**：跳过该条，绝不降级发布受污染文本。
+  > 与之相对，**不可恢复 / 已产生副作用**的失败仍然 `exit 1` 让 job 失败、交维护者介入：
+  > 查既有 Issue 失败（无法判断是否已存在，贸然创建会造成重复）、
+  > 创建后自愈查询失败（Issue 已建出，必须人工核对是否留下重复）。
+  > 判据：**「这条失败了，下一条还能不能安全地独立判断」**——能，就跳过继续；不能，就停下。
+  4. **去重翻页超硬上限**（`MAX_DEDUPE_PAGES=10000` 页）：两个 `find_*` 辅助函数的退出
+     条件是「取到空页」，上游若异常地持续返回整页，会一直翻到 job 超时。加了上限后，
+     最坏情况变成**一次可诊断的失败/跳过**，而不是静默拖死到 Actions 超时强杀。
+     两条路径的处置不同（判据同「这条失败了，下一条还能不能安全地独立判断」）：
+     - **公告去重翻页超限** → 只影响本条告警 → 跳过该条、继续处理后续（返回 1）；
+     - **Issue 去重翻页超限** → 判据不可信、贸然创建会造成重复 → `exit 1` 停止发布（返回 2）。
+  > 📐 自检方式：从工作流中抽出 `publish` 的 `run` 脚本，用伪 `curl` 做行为仿真，覆盖
+  > 「正常 / 列公告 403 / 建公告 403 / 响应非数组 / 翻页无界」五种场景，断言**退出码为 0**
+  > 且**其余告警照常建公告 + 建 Issue**（受影响的只是被跳过的那几条）。
 
 ---
 
@@ -339,7 +399,10 @@ hatch run main -t ai_audit.alert_triage_example \
 
 ---
 
-> 🔒 安全模型说明：本工作流已按「不可信输入与高权限动作隔离」原则改造——审计 job 无凭据、
+> 🔒 安全模型说明：本工作流已按「不可信输入与高权限动作隔离」原则改造——审计 job **不持仓库写凭据**
+> （但会注入 `AI_*` / 只读 `GITHUB_TOKEN` / 可选 `MCP_CONFIG`，并非「无任何 Secret」；
+> 其中 `MCP_CONFIG` 内嵌凭据的权限范围**不受本工作流约束**，须由使用者自行配为只读，本 job
+> 的「无仓库写凭据」结论才成立）、
 > 发文 job 不落地源码，两者以 artifact 传信，并在 `workflow_run` 上加了 fork 门禁，
 > 用于消除「fork PR 源码 → 持 GH_PAT 的 AI agent」这一提权路径。
 >

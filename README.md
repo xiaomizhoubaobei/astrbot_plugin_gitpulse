@@ -1,5 +1,9 @@
 # GitPulse
 
+<div align="center">
+  <img src="./logo.png" alt="GitPulse Logo" width="180" height="180" style="border-radius: 50%;">
+</div>
+
 GitPulse 是一个 AstrBot 插件，用于接收 GitHub 事件（push、issues、pull requests 等）并转发到聊天平台（QQ 群组、私聊等）。
 
 ## 功能特性

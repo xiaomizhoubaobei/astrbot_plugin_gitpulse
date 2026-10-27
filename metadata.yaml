@@ -7,5 +7,5 @@ repo: https://github.com/xiaomizhoubaobei/astrbot_plugin_gitpulse
 license: MIT
 tags:
   - Github
-icon: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
+icon: ./logo.png
 social_link: https://mc.mimeng.top
