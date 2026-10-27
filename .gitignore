@@ -38,3 +38,7 @@ Thumbs.db
 .venv
 venv/
 ENV/
+
+# AI 审计交接私钥（仅经 GitHub Secret 注入，严禁入库）
+ai-audit/handoff-private*.pem
+handoff-private*.pem
