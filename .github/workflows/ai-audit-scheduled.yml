@@ -57,6 +57,11 @@
 #                     ⚠️ 可能内嵌你自行提供的 GitHub 凭据，其权限范围不受本工作流约束；
 #                     若启用请务必配成**只读**，否则 triage job 不再满足「无仓库写能力」。
 #
+# 所需 Environment（仓库 Settings → Environments）：
+#   - ai-audit-publish  已在仓库中创建，并配置 Required reviewers = xiaomizhoubaobei。
+#     publish job 为人工审批闸门：AI 判定 APPROVED 后仍需该审核人批准才能真正发文。
+#     ⚠️ 若 publish job 未声明 environment:，上述审核人不生效（环境只是仓库级配置）。
+#
 # ⚠️ 注意：
 #   - 首次使用前请先用 workflow_dispatch 手动跑一次，确认链路正常。
 #   - ⚠️ 本示例会**真实创建 Issue 与私密安全公告**（仅对判定为真实漏洞、且经校验

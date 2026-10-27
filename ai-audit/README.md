@@ -243,6 +243,14 @@ hatch run main -t ai_audit.alert_triage_example \
   CodeQL 运行一律跳过，从源头杜绝把 PR 源码当作不可信输入送进审计链。
 - **手动触发**：在仓库 **Actions → AI 审计（CodeQL 完成后自动分流）→ Run workflow** 手动跑一次用于验证。
 
+**所需 Environment**（仓库 **Settings → Environments**）：
+
+`ai-audit-publish` —— 已在本仓库创建，并配置 **Required reviewers = `xiaomizhoubaobei`**。
+作为 `publish` job 的人工审批闸门：AI 判定 APPROVED 后仍需该审核人批准才会真正发文。
+
+> ⚠️ 环境只是仓库级配置，**必须在 `publish` job 上声明 `environment: ai-audit-publish`**
+> 才会生效；未声明时审核人不会被触发。
+
 **所需 Secrets**（仓库 **Settings → Secrets and variables → Actions**）：
 
 | Secret | 必填 | 用途 |
