@@ -7,6 +7,8 @@ from typing import Any, get_type_hints
 
 from astrbot.api import AstrBotConfig, logger
 
+from .constants import DEFAULT_BIND_HOST
+
 
 class ConfigNode:
     """配置节点：dict → 强类型属性访问（极简版）."""
@@ -76,12 +78,24 @@ class PluginConfig(ConfigNode):
     agent_timeout: int
     agent_system_prompt: str
 
+    @property
+    def bind_host(self) -> str:
+        """Webhook 服务监听地址：未配置时回落到默认监听地址.
+
+        不对该字段做类型注解，避免与 property 同名冲突；宿主缺键时
+        ``_data`` 取不到值，此处兜底到 ``DEFAULT_BIND_HOST``，
+        避免把空串交给 ``web.TCPSite`` 导致启动即失败。
+        """
+        raw = self._data.get("bind_host")
+        return str(raw) if raw else DEFAULT_BIND_HOST
+
     def __init__(self, cfg: AstrBotConfig):
         """基于 AstrBotConfig 装载配置并输出启动日志."""
         super().__init__(cfg)
         # 配置验证和完整日志
         logger.info("=" * 60)
         logger.info("GitHub Webhook: Configuration loaded")
+        logger.info(f"  bind_host: {self.bind_host}:{self.port}")
         logger.info(f"  target_umo: {self.target_umo}")
         logger.info(f"  enable_agent: {self.enable_agent}")
         logger.info(f"  llm_provider_id: {self.llm_provider_id or '(default)'}")

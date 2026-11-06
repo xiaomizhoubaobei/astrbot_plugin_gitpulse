@@ -5,7 +5,7 @@ import json
 from astrbot.api import AstrBotConfig
 
 from src.core.config import PluginConfig
-from src.core.constants import DEFAULT_PORT
+from src.core.constants import DEFAULT_BIND_HOST, DEFAULT_PORT
 
 
 def _make_config(tmp_path, config_data: dict) -> AstrBotConfig:
@@ -36,6 +36,8 @@ def test_config_default_values(tmp_path):
     plugin_config = PluginConfig(config)
 
     assert plugin_config.port == DEFAULT_PORT
+    # 未配置 bind_host 时回落到默认监听地址，避免空串导致服务启动失败
+    assert plugin_config.bind_host == DEFAULT_BIND_HOST
     assert plugin_config.rate_limit == 10
     assert plugin_config.enable_agent is False
 
@@ -44,6 +46,7 @@ def test_config_with_custom_values(tmp_path):
     """测试配置类的自定义值"""
     config_data = {
         "port": 9000,
+        "bind_host": "127.0.0.1",
         "target_umo": "test:GroupMessage:123456",
         "webhook_secret": "test_secret",
         "rate_limit": 20,
@@ -56,6 +59,7 @@ def test_config_with_custom_values(tmp_path):
     plugin_config = PluginConfig(config)
 
     assert plugin_config.port == 9000
+    assert plugin_config.bind_host == "127.0.0.1"
     assert plugin_config.target_umo == "test:GroupMessage:123456"
     assert plugin_config.webhook_secret == "test_secret"
     assert plugin_config.enable_agent is True
@@ -71,6 +75,8 @@ def test_config_tolerates_missing_keys():
     plugin_config = PluginConfig({"some_unrelated_key": 1})
 
     assert plugin_config.port == 0
+    # bind_host 是带兜底的 property，缺键时仍返回默认监听地址
+    assert plugin_config.bind_host == DEFAULT_BIND_HOST
     assert plugin_config.rate_limit == 0
     assert plugin_config.agent_timeout == 0
     assert plugin_config.enable_agent is False

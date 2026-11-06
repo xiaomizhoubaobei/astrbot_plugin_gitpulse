@@ -45,9 +45,14 @@ class GitHubWebhookPlugin(Star):
 
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
-        self.site = web.TCPSite(self.runner, "0.0.0.0", self.cfg.port)
+        # 监听地址来自配置（默认 0.0.0.0，可用 bind_host 收敛到 127.0.0.1
+        # 配合反向代理），不再在代码里硬编码通配地址。
+        self.site = web.TCPSite(self.runner, self.cfg.bind_host, self.cfg.port)
         await self.site.start()
-        logger.info(f"GitHub Webhook: Server started on port {self.cfg.port}")
+        logger.info(
+            f"GitHub Webhook: Server started on "
+            f"{self.cfg.bind_host}:{self.cfg.port}"
+        )
 
     async def handle_webhook(self, request: web.Request):
         """处理 GitHub webhook 请求：限流、验签、分发并回包."""

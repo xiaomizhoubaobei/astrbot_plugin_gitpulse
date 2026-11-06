@@ -5,6 +5,12 @@
     "default": 8080,
     "hint": "接收 GitHub webhook 请求的端口号，确保防火墙允许该端口"
   },
+  "bind_host": {
+    "description": "监听地址",
+    "type": "string",
+    "default": "0.0.0.0",
+    "hint": "Webhook 服务绑定的网卡地址。默认 0.0.0.0 监听全部网卡（GitHub 需从外部访问）；若使用 Nginx/Caddy 反向代理，可改为 127.0.0.1 仅监听本机。"
+  },
   "target_umo": {
     "description": "目标 UMO",
     "type": "string",

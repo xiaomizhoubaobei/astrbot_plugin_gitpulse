@@ -39,6 +39,7 @@ uv pip install -r requirements.txt
 ```json
 {
   "port": 8080,
+  "bind_host": "0.0.0.0",
   "target_umo": "platform_id:GroupMessage:群号",
   "webhook_secret": "your_github_webhook_secret",
   "rate_limit": 10
@@ -62,7 +63,7 @@ sudo systemctl restart astrbot
 查看日志确认插件已加载：
 
 ```
-[INFO] GitHub Webhook server started on port 8080
+[INFO] GitHub Webhook: Server started on 0.0.0.0:8080
 ```
 
 ## 配置 GitHub Webhook

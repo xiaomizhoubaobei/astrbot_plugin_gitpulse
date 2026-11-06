@@ -8,6 +8,9 @@
 ## [未发布]
 
 ### 新增
+- 新增 `bind_host` 配置项，Webhook 监听地址不再硬编码（默认 `0.0.0.0`，可改为 `127.0.0.1` 配合反向代理）
+  - 修复 `security-scan` 长期红灯：Bandit `B104`（Possible binding to all interfaces）命中 `src/core/plugin.py`
+  - 默认值集中到 `src/core/constants.py:DEFAULT_BIND_HOST`，配置项缺失时按默认值兜底
 - CI 同步到 GitHub 镜像仓库时开启强制推送（`.cnb.yml` 的 `git-sync` 步骤新增 `force: true`）
   - 即使 CNB 与镜像仓库历史分叉，也能以 CNB 侧为准强制覆盖，避免同步失败或半同步状态
 
