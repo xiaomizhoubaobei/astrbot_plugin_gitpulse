@@ -828,7 +828,7 @@ pre-commit run --all-files
 | `Scorecard.yml` | 供应链安全评分 |
 | `inclusiveness-analyzer.yml` | 包容性分析 |
 | `stale.yml` | 陈旧 Issue / PR 自动化 |
-| `release.yml` | 发布流程（含发布包白名单边界校验、ci-evidence-pack 证据包） |
+| `release.yml` | 发布流程（含发布包白名单边界校验、ci-evidence-pack 证据包；构建侧 Python 固定 `3.13`，见下条口径注 1） |
 | `coverage.yml` | 单元测试覆盖率统计并上报 Codecov（`main` push / PR，见下方 §10.8.3） |
 
 > 📌 **口径统一（2026-10 同步）**：本目录工作流已与
@@ -838,6 +838,11 @@ pre-commit run --all-files
 > 1. **Python 版本一律 3.12 起**（`CodeQL.yml` / `security-scan.yml` 单版本 3.12，
 >    `PythonDependencyAudit.yml` 矩阵 `3.12/3.13/3.14`，`coverage.yml` 同）
 >    —— 本仓库声明 3.12+，上游模板的 3.13 起不适用。
+>    **唯一例外是 `release.yml` 用 `'3.13'`**：它跑的不是插件本身，而是
+>    `ci-evidence-pack`（其 `action.yml` 首个 composite step 硬断言 `python3 >= 3.13`，
+>    低于此值直接 exit 1 → 证据包步骤红 → 创建 Release 被跳过）。**不要「统一」回 3.12**，
+>    那正是 2026-11 那次 Release 失败的原因；同组织 `astrbot_plugin_models_ai` /
+>    `astrbot_plugin_ots_memory` 的 `release.yml` 亦为 `3.13`。
 > 2. **依赖清单位于 `src/requirements.txt`**（`PythonDependencyAudit.yml` 的 `inputs`、
 >    `release.yml` 的安装与打包都按此路径）；根目录另外补了 `requirements.txt` /
 >    `requirements-dev.txt`，供 Dependabot 的 `directory: "/"` 条目跟踪，内容与 `src/`

@@ -37,10 +37,18 @@ jobs:
           fetch-depth: 0  # 获取完整的 git 历史
 
       # 2. 设置 Python 环境
+      #
+      # ⚠️ 这里是**构建侧**的 Python，必须是 3.13+，与本仓库「插件运行需 3.12+」是两回事：
+      #    第 9 步的 ci-evidence-pack 内核纯标准库、且 action.yml 首个 composite step
+      #    硬断言 `python3 >= 3.13`（依赖 3.11+ 的 tomllib、并要求 3.13 的解释器）。
+      #    写成 3.12 时该断言直接 exit 1 → 整步失败 → 创建 Release 被跳过，
+      #    现场只剩一句「生成证据包失败」，与真正原因（解释器版本不够）隔了很远。
+      #    同组织其它插件仓库（models_ai / ots_memory）同为 '3.13'，口径一致。
+      #    插件自身的运行依赖（src/requirements.txt，aiohttp）在 3.13 上照常可装。
       - name: 设置 Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: '3.12'
+          python-version: '3.13'
 
       # 3. 获取版本号和插件名称（严格白名单校验，杜绝命令注入）
       - name: 获取版本号和插件名称
