@@ -84,7 +84,7 @@ extract_private_key_fingerprints() {
 # ------------------------------------------------------------------------------
 retry_run() {
     local desc="$1"; shift
-    local attempt=1 delay=1
+    local attempt=1 delay="$CURL_RETRY_SLEEP"
     while true; do
         if "$@"; then
             return 0
