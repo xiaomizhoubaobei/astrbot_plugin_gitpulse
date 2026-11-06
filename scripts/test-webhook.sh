@@ -114,19 +114,23 @@ send_request() {
     local event_type="$1"
     local payload="$2"
 
-    # 构建 curl 命令
-    CURL_CMD="curl -s -X POST \"$WEBHOOK_URL\" \
-        -H \"Content-Type: application/json\" \
-        -H \"X-GitHub-Event: $event_type\""
+    # 用数组拼装 curl 参数，全程不经过 eval：
+    # 原实现把整条命令拼成字符串再 eval，payload 里一旦出现引号 / 反引号
+    # 就会被二次求值（命令注入），且变量未加引号会触发 shellcheck SC2086。
+    local -a curl_args=(
+        curl -s -X POST "$WEBHOOK_URL"
+        -H "Content-Type: application/json"
+        -H "X-GitHub-Event: $event_type"
+    )
 
     # 如果有密钥，添加签名头（简化版，实际使用 HMAC）
     if [[ -n "$SECRET" ]]; then
-        CURL_CMD="$CURL_CMD \
-        -H \"X-Hub-Signature-256: sha256=$(echo -n \"$payload\" | openssl dgst -sha256 -hmac \"$SECRET\" | awk '{print $2}')\""
+        local signature
+        signature="sha256=$(printf '%s' "$payload" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $2}')"
+        curl_args+=(-H "X-Hub-Signature-256: $signature")
     fi
 
-    CURL_CMD="$CURL_CMD \
-        -d '$payload'"
+    curl_args+=(-d "$payload")
 
     if [[ "$VERBOSE" == true ]]; then
         echo -e "${YELLOW}发送请求...${NC}"
@@ -138,9 +142,9 @@ send_request() {
         echo ""
     fi
 
-    # 执行请求
-    RESPONSE=$(eval $CURL_CMD)
-    EXIT_CODE=$?
+    # 执行请求；用 `|| EXIT_CODE=$?` 兜住失败，避免 set -e 直接中断脚本
+    EXIT_CODE=0
+    RESPONSE="$("${curl_args[@]}")" || EXIT_CODE=$?
 
     if [[ $EXIT_CODE -eq 0 ]]; then
         echo -e "${GREEN}✓ 请求发送成功${NC}"

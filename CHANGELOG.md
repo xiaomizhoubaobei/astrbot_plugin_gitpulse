@@ -11,6 +11,16 @@
 - CI 同步到 GitHub 镜像仓库时开启强制推送（`.cnb.yml` 的 `git-sync` 步骤新增 `force: true`）
   - 即使 CNB 与镜像仓库历史分叉，也能以 CNB 侧为准强制覆盖，避免同步失败或半同步状态
 
+### 安全
+- 同步 GitHub 镜像仓库 StepSecurity 安全加固 PR（xiaomizhoubaobei/astrbot_plugin_gitpulse#14）
+  - `.pre-commit-config.yaml` 新增 `gitleaks`（密钥扫描）、`shellcheck`（Shell 脚本检查）、`pylint` 三个钩子
+  - `.github/dependabot.yml` 新增 `directory: /src` 的 pip 生态条目，跟踪 `src/requirements.txt`
+  - 本地适配：`shellcheck` 改用 `shellcheck-py/shellcheck-py`（自带二进制，避免 pre-commit.ci 无 `shellcheck` 命令而失败）；
+    `pylint` 仅启用 `E` 级并关闭 `E0401`/`E0402`，不引入与 black/flake8/pydocstyle 重叠的风格噪声
+- 修复新增钩子暴露的两处 Shell 问题（此前无人检查，一直潜伏）
+  - `scripts/test-webhook.sh`：改为数组拼装 curl 参数，去掉 `eval` 与未加引号的变量展开（消除命令注入面与 SC2086）
+  - `install_gpg_keys.sh`：`retry_run` 的首次退避改用已声明的 `CURL_RETRY_SLEEP`，不再声明后闲置（SC2034）
+
 ### 修复
 - AI 审计示例（`.github/workflows/ai-audit-scheduled.yml`）：公告接口失败不再拖垮整批告警处理
   - `GH_PAT` 缺 `Repository security advisories` 权限时，列公告/建公告的失败不再被

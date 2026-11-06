@@ -46,6 +46,11 @@
 本仓库使用 [pre-commit](https://pre-commit.com/) 统一代码风格，配置见根目录 `.pre-commit-config.yaml`，
 覆盖 black、isort、flake8、mypy、pydocstyle 以及文件层面检查（行尾空白、文件末尾换行等）。
 
+安全与脚本检查另有三项：`gitleaks`（密钥扫描）、`shellcheck`（Shell 脚本检查）、`pylint`（仅 `E` 级真错误，
+关闭 `E0401`/`E0402` 以免依赖与宿主未安装时误报）。其中 `shellcheck` 取自
+`shellcheck-py/shellcheck-py`（自带二进制），不依赖宿主机预装 `shellcheck`——pre-commit.ci 的 runner
+镜像里没有该命令，用 `language: script` 的钩子会直接失败。
+
 **本地手动执行**（提交前请自行跑一次）：
 
 ```bash

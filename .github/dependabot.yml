@@ -39,3 +39,11 @@ updates:
     commit-message:
       prefix: "ci"
       prefix-development: "ci(dev)"
+
+  # 插件运行时依赖清单位于 src/requirements.txt（根目录 requirements.txt 与
+  # requirements-dev.txt 已由上方 directory: "/" 的 pip 配置覆盖），
+  # 此处单独跟踪 src/，否则 src/requirements.txt 的版本更新长期无人跟进。
+  - package-ecosystem: "pip"
+    directory: "/src"
+    schedule:
+      interval: "daily"
