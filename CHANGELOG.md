@@ -14,6 +14,14 @@
 - CI 同步到 GitHub 镜像仓库时开启强制推送（`.cnb.yml` 的 `git-sync` 步骤新增 `force: true`）
   - 即使 CNB 与镜像仓库历史分叉，也能以 CNB 侧为准强制覆盖，避免同步失败或半同步状态
 
+### 更改
+- Release 工作流（`.github/workflows/release.yml`）触发条件由 `push: main`（`paths: '**/*.py'`）改为 **`v*` tag push**
+  - 发布节奏改由「什么时候打 tag」决定，代码合入与发版解耦；main 上的中间态不再意外变成 Release
+  - 新增 tag 与 `metadata.yaml` 版本一致性校验：tag 名必须等于 `v<metadata version>`，否则第 3 步直接失败
+  - 证据包验签身份由 `@refs/heads/main` 改为 `@${{ github.ref }}`（tag 触发即 `refs/tags/<tag>`）
+  - `workflow_dispatch` 手动触发保留，且不受 tag/版本一致性校验约束
+  - 说明：CNB 侧 `.cnb.yml` 只同步 `main` 分支、不搬 tag，故该工作流实际由 GitHub 镜像仓库侧的 tag push 触发
+
 ### 安全
 - 同步 GitHub 镜像仓库 StepSecurity 安全加固 PR（xiaomizhoubaobei/astrbot_plugin_gitpulse#14）
   - `.pre-commit-config.yaml` 新增 `gitleaks`（密钥扫描）、`shellcheck`（Shell 脚本检查）、`pylint` 三个钩子

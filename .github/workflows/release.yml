@@ -1,13 +1,23 @@
 name: 'Release 构建'
 
-# 触发条件：推送到 main 分支时触发或手动触发
+# 触发条件：推送 `v*` tag 时触发，或手动触发。
+#
+# 为什么是 tag 而不是 push main：
+#   - Release 的语义是「给某个确定的版本点打一次包」，tag 就是那个版本点本身；
+#     挂在 push main + paths 过滤上时，任何一次 .py 改动都会跑一遍发布流程，
+#     版本号没改就白跑，改了就容易和 tag 对不上。
+#   - 改成 tag 触发后，发布节奏完全由「什么时候打 tag」决定，
+#     代码合入与发版解耦，main 上的中间态不会再意外变成 Release。
+#
+# ⚠️ 打 tag 之前请先把 metadata.yaml 的 version 改好并合入 main——
+#    第 3 步会校验「tag 名 == v<metadata version>」，不一致直接失败。
+#    另：CNB 侧 `.cnb.yml` 只把 main 分支同步到 GitHub 镜像仓库、不搬 tag，
+#    故本工作流实际是在 GitHub 镜像仓库侧被 tag push 触发的。
 on:
   push:
-    branches:
-      - main
-    paths:
-      - '**/*.py'
-  workflow_dispatch:  # 允许手动触发
+    tags:
+      - 'v*'
+  workflow_dispatch:  # 允许手动触发（手动触发时不做 tag/版本一致性校验）
 
 permissions:
   contents: read
@@ -77,6 +87,17 @@ jobs:
           fi
           if ! printf '%s' "$PLUGIN_NAME" | grep -Eq '^[A-Za-z0-9._-]{1,64}$'; then
             echo "::error::metadata.yaml 中的 name 非法（仅允许字母/数字/._-，且不超过 64 字符）：'${PLUGIN_NAME}'"
+            exit 1
+          fi
+
+          # ── tag 触发时的「tag 名 == v<版本号>」一致性校验 ─────────────────
+          # 本工作流由 tag push 触发，但发布用的 tag 名是从 metadata.yaml 推导的
+          # （第 10 步 action-gh-release 的 tag_name）。两者不一致时，Release 会被
+          # 建到另一个 tag 上（如本次 tag 是 v0.0.2，metadata 还是 0.0.1 → 发布物
+          # 挂到 v0.0.1），tag 与产物错位且不报错。故在此处提前拦下。
+          # 手动触发（workflow_dispatch）不受此约束：它本就是「按当前 metadata 发布」。
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ] && [ "${GITHUB_REF_NAME:-}" != "v${VERSION}" ]; then
+            echo "::error::tag 名与 metadata.yaml 版本不一致：tag='${GITHUB_REF_NAME}'，metadata version='${VERSION}'（应为 'v${VERSION}'）；请先修正 metadata.yaml 后再打 tag"
             exit 1
           fi
 
@@ -184,7 +205,9 @@ jobs:
           # version 经 env 传入，禁止直接内插进 run 脚本
           VERSION: ${{ steps.get_info.outputs.version }}
         run: |
-          # 从上一个标签生成发布说明
+          # 从上一个标签生成发布说明。
+          # 取 HEAD^ 而非 HEAD：本工作流由 tag push 触发，HEAD 正是本次要发布的
+          # 那个 tag，从它往前找才是「上一个版本」。
           PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
 
           # 定义生成更新日志的函数
@@ -332,7 +355,6 @@ jobs:
       #   3) 签名产物是 cosign v3 的 .sigstore.json 单文件，.sig + .crt 双文件形态已废弃。
       - name: 生成证据包
         id: evidence
-        if: steps.get_info.outputs.tag_exists != 'true'
         uses: xiaomizhoubaobei/ci-evidence-pack@53216365066a9fe64de178ab0184539ad253e355 # v0.0.2
         with:
           # 收集范围：插件 zip 产物 + 发布正文 + 构建输入清单。
@@ -374,12 +396,13 @@ jobs:
             证据包 sha256：`${{ steps.evidence.outputs.bundle-sha256 }}`
 
             验签时请用 `--certificate-identity` 做**全等**匹配，核对身份为
-            `https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/heads/main`：
+            `https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.ref }}`
+            （tag 触发时 `${{ github.ref }}` 即 `refs/tags/<本次 tag>`）：
 
             ```bash
             cosign verify-blob \
               --bundle evidence-*.tar.gz.sigstore.json \
-              --certificate-identity 'https://github.com/${{ github.repository }}/.github/workflows/release.yml@refs/heads/main' \
+              --certificate-identity 'https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.ref }}' \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               evidence-*.tar.gz
             ```
