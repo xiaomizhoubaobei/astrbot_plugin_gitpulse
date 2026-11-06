@@ -15,6 +15,6 @@
 # 注意：本仓库 tests/conftest.py 已在 astrbot 缺失时注入最小桩，故即使未装宿主，
 # 单测仍可跑通——这也是 CI 未强制安装宿主的原因。
 
-pytest>=8.0
+pytest>=9.2.0
 pytest-asyncio>=0.23
 coverage>=7.0
