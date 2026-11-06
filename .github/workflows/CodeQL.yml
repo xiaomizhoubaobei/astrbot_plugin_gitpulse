@@ -95,7 +95,7 @@ jobs:
         python -m compileall -q src main.py
 
     - name: 执行 CodeQL 分析
-      uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+      uses: github/codeql-action/analyze@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
       with:
         # 单一组合下 category 只需按语言区分；保留语言维度便于未来扩展多语言
         category: "/language:${{ matrix.language }}"
