@@ -1,0 +1,122 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## 项目概览
+
+GitPulse 是一个 **AstrBot 插件**（Python 3.12+），用于接收 GitHub Webhook（`push` / `issues` / `pull_request` / `ping`），格式化为聊天消息后转发到 AstrBot 指定会话；可选通过 AstrBot 的 LLM 能力改写消息。插件不是独立进程——由 AstrBot 加载后，自己启动一个 aiohttp HTTP 服务监听 `/webhook`。
+
+**`AGENTS.md` 是本仓库的权威工程规范**（提交信息、GPG 强制签名、PR 流程、CI 口径、目录约定），优先级高于本文件；动手前先读相关章节。
+
+## 常用命令
+
+```bash
+# 安装依赖（含 pytest/coverage；不安装 AstrBot 宿主也能跑单测）
+pip install -r requirements-dev.txt
+
+# 运行全部测试
+python -m pytest tests -q
+
+# 运行单个测试文件 / 单个用例
+python -m pytest tests/test_pull_request_formatter.py -q
+python -m pytest tests/test_pull_request_formatter.py::test_synchronize_action_uses_merge_emoji -q
+
+# 与 CI 完全一致的覆盖率口径（以 src 包为计数源）
+python -m coverage run --source=src -m pytest tests -q
+python -m coverage report -m
+python -m coverage xml -o coverage.xml
+
+# 代码检查（提交前必须执行）
+pip install pre-commit
+pre-commit install
+pre-commit run --all-files
+
+# 手动向已启动的插件发测试 payload（需 AstrBot 已加载插件并在监听）
+./scripts/test-webhook.sh push      # 也支持 issues / pr / ping
+./scripts/test-webhook.sh -p 6100 -s "your-secret" -v pr
+```
+
+说明：
+
+- 运行依赖 `aiohttp` 同时声明在根 `requirements.txt` 与 `src/requirements.txt`，改版本时**两处一起改**（Dependabot 分别跟踪）。
+- `tests/conftest.py` 在无法导入 `astrbot` 时会注入最小桩，因此纯净环境也能跑测试；若本机按 `requirements-dev.txt` 注释装了上游宿主，则使用真实宿主。
+- CNB 云原生开发容器（`.cnb.yml` 的 vscode 阶段）会把上游 AstrBot 的 `astrbot/` 包复制到仓库根。它会被 Python 当作 `astrbot` 导入，从而**绕过 conftest 的桩**并因缺宿主依赖导致测试/mypy 报错；遇到这种情况，把该目录临时移开（它已在 `.gitignore` 中）或在纯净目录跑测试。
+
+## 架构与数据流
+
+```
+main.py: PluginEntry（@register 注册的 AstrBot 入口）
+  └─ src/core/plugin.py: GitHubWebhookPlugin
+       ├─ aiohttp app，仅 POST /webhook
+       ├─ src/utils/rate_limiter.py     滑动窗口限流
+       ├─ src/utils/verify_signature.py HMAC-SHA256 验签
+       ├─ src/handlers/*                从 payload 提取字段
+       ├─ src/formatters/*              纯函数：字段 → 消息文本
+       └─ 发送：context.send_message(target_umo)
+            └─ enable_agent 时先经 src/services/llm_service.py 改写
+```
+
+请求处理顺序（`GitHubWebhookPlugin.handle_webhook`）：
+
+1. 限流（`rate_limit > 0` 时）；
+2. 读取并解析 JSON；
+3. 验签：仅当配置了 `webhook_secret` **且**请求带 `X-Hub-Signature-256` 时校验，失败返回 401（无签名头则跳过）；
+4. `X-GitHub-Event` 分发：`ping` 直接回 `Pong`，`push` / `issues` / `pull_request` 交给对应 handler，其它事件只记日志；
+5. handler 返回消息字符串或 `None`（`None` 表示不发消息）；
+6. `enable_agent` 为真时走 LLM（失败/超时自动回落到模板消息），否则直接发送。
+
+分层职责：
+
+| 层 | 位置 | 职责 |
+| --- | --- | --- |
+| 入口 | `main.py` | 把仓库根加入 `sys.path`，代理到真正的插件类 |
+| 核心 | `src/core/plugin.py` | HTTP 服务、限流、验签、事件路由、发送 |
+| 配置 | `src/core/config.py` | `PluginConfig`（`ConfigNode` 子类）强类型读取配置 |
+| 常量 | `src/core/constants.py` | 事件类型、动作、默认端口/监听地址 |
+| 处理 | `src/handlers/` | payload → formatter 参数 |
+| 格式化 | `src/formatters/` | 纯函数，输出消息文本 |
+| 工具 | `src/utils/` | 限流器、签名校验 |
+| 服务 | `src/services/llm_service.py` | 调 `context.llm_generate`，超时用 `agent_timeout` |
+
+关键约定与易踩点：
+
+- **动作常量必须与 GitHub 真实枚举一致**：PR 同步动作是 `synchronize`（无尾字母 d，见 `ACTION_PR_SYNCHRONIZE`），formatter 的 emoji 映射键一律引用 `src/core/constants.py`，不要写回硬编码字符串，否则会再次出现「🔀 永不命中」。
+- **配置缺失兜底**：宿主 `AstrBotConfig` 对缺失键返回 `None`，`ConfigNode` 按字段类型注解给出零值兜底；`bind_host` 是 property（缺省回落 `DEFAULT_BIND_HOST`），不要改成普通字段。
+- **默认监听 `0.0.0.0`** 是有意为之（GitHub 需从外部访问），`src/core/constants.py` 中带 `# nosec B104`；暴露面用 `bind_host` 配置收敛。
+- **LLM 是可选增强**：任何 LLM 异常、空输出、超时都必须回落到模板消息，不能让 webhook 请求失败。
+- **测试约定**：测试用 `from src.xxx import ...`；formatter/常量这类纯逻辑直接单测，新增动作映射时同步补参数化用例。
+
+## 扩展方式
+
+新增 GitHub 事件（口径见 `docs/06-development.md` 与 `docs/07-project-structure.md`）：
+
+1. `src/handlers/<event>_handler.py` 实现 `async def handle_<event>_event(data, context)`；
+2. `src/formatters/<event>_formatter.py` 实现纯函数格式化；
+3. 在 `src/core/plugin.py` 的 `handle_webhook()` 中按 `X-GitHub-Event` 增加路由；
+4. 补 `tests/` 单测，并更新 `_conf_schema.json`（若新增配置）、`docs/03-usage.md` 与 `CHANGELOG.md`。
+
+插件配置项的唯一来源是 `_conf_schema.json`（AstrBot WebUI 据此渲染），代码侧默认值集中在 `src/core/constants.py`。
+
+## 仓库工作流（强制）
+
+- **提交信息**：全部使用中文，遵循 Angular 格式 `<type>(<scope>): <subject>`（如 `fix(formatter): 修正 PR 同步动作常量`）。
+- **GPG 签名**：每次 `git commit` 前必须先执行 `bash install_gpg_keys.sh`，再用 `git commit -S`；推送前确认 `git log --show-signature` 为 `Good signature`。
+- **pre-commit**：提交前 `pre-commit run --all-files`，black / isort / flake8 / mypy / pydocstyle / pylint(E) / gitleaks / shellcheck 必须全绿。
+- **分支与 PR**：禁止直接推送 `main`，一律特性分支 + PR。`.cnb.yml` 会把 `main` 强制同步到 GitHub 镜像仓库 `xiaomizhoubaobei/astrbot_plugin_gitpulse`，因此**同一变更还必须在 GitHub 镜像仓库创建同名同分支的 PR**（AGENTS.md §3.5）。
+- **发版**：`metadata.yaml` 的 `version` 先合入，再在 GitHub 镜像仓库打 `v<version>` tag（`release.yml` 会校验 tag 与版本一致）。
+
+### 提交签名排错（本仓库已踩过的坑）
+
+- **`no_user`（最常见）**：本地验签正常，但 GitHub/CNB 显示「无法验证」。平台按 **committer 邮箱**关联用户，云原生环境注入的 `GIT_COMMITTER_EMAIL=cnb@cnb.local` 会让提交判 `no_user`。
+  - 检查：`git log -1 --format='%ae / %ce'`，committer 必须是账号已验证邮箱（`qixiaoxin@stu.sqxy.edu.cn`）。
+  - 修复：新版 `install_gpg_keys.sh`（上游 `XMZZUZHI/oidc-auth`）会把 author/committer 统一到签名密钥邮箱；当前 shell 执行 `source .git/gpg-commit-env.sh`（新终端由 `~/.bashrc` 自动生效）后再提交。
+- **`unknown_key`**：签名密钥未登记到平台。密钥须同时存在于 CNB 与 GitHub 账号；可分别用 `GET https://api.cnb.cool/user/gpg-keys`（`Accept: application/json` + `CNB_TOKEN`）和 `GET https://api.github.com/users/<login>/gpg_keys` 核对。**严禁自行生成新密钥**（新公钥未登记会被判 `unknown_key`）。
+- **重签已有提交**：`git rebase --force-rebase --gpg-sign origin/main`（普通 `rebase` 在分支已基于 main 时会 no-op，必须加 `--force-rebase`），随后对 CNB 与 GitHub 镜像两个远端 force-push，PR 会自动更新。
+- **验证签名**：本地 `git verify-commit --raw <sha>` 应含 `GOODSIG` / `VALIDSIG`；GitHub `GET /repos/<owner>/<repo>/commits/<sha>` 的 `.commit.verification.verified` 与 CNB `GET /{repo}/-/git/commits/<sha>` 的 `.commit.verification.verified` 均应为 `true`。
+- **签名未通过禁止 push**；`.cnb.yml` 同步镜像时不会重签，CNB 与 GitHub 两侧看到的必须是同一份已签名历史。
+
+## CI 概览
+
+- `.github/workflows/coverage.yml`：push/PR 到 `main` 时在 Python 3.12/3.13/3.14 上跑测试，`--source=src` 统计覆盖率，仅 3.12 上报 Codecov（`codecov.yml`，项目/补丁门禁均为 informational）。
+- 其余 GitHub Actions：CodeQL、Bandit/DevSkim/trufflehog 安全扫描、依赖审计、Scorecard，以及 `ai-audit-scheduled.yml`（CodeQL 完成后用 LLM 分流告警，`triage`/`publish` 两段式隔离令牌）。
+- CNB 侧 `.cnb.yml` 只负责开发容器与把 `main` 同步到 GitHub 镜像，不做覆盖率上报。
