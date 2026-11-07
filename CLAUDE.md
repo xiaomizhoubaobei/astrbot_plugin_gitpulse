@@ -100,18 +100,18 @@ main.py: PluginEntry（@register 注册的 AstrBot 入口）
 ## 仓库工作流（强制）
 
 - **提交信息**：全部使用中文，遵循 Angular 格式 `<type>(<scope>): <subject>`（如 `fix(formatter): 修正 PR 同步动作常量`）。
-- **GPG 签名**：每次 `git commit` 前必须先执行 `bash install_gpg_keys.sh`，再用 `git commit -S`；推送前确认 `git log --show-signature` 为 `Good signature`。
+- **GPG 签名**：每次 `git commit` 前必须先执行 `bash install_gpg_keys.sh`，并在**同一条 shell 命令里** `source .git/gpg-commit-env.sh`，再用 `git commit -S`；推送前确认 `git log --show-signature` 为 `Good signature`。
 - **pre-commit**：提交前 `pre-commit run --all-files`，black / isort / flake8 / mypy / pydocstyle / pylint(E) / gitleaks / shellcheck 必须全绿。
 - **分支与 PR**：禁止直接推送 `main`，一律特性分支 + PR。`.cnb.yml` 会把 `main` 强制同步到 GitHub 镜像仓库 `xiaomizhoubaobei/astrbot_plugin_gitpulse`，因此**同一变更还必须在 GitHub 镜像仓库创建同名同分支的 PR**（AGENTS.md §3.5）。
 - **发版**：`metadata.yaml` 的 `version` 先合入，再在 GitHub 镜像仓库打 `v<version>` tag（`release.yml` 会校验 tag 与版本一致）。
 
 ### 提交签名排错（本仓库已踩过的坑）
 
-- **`no_user`（最常见）**：本地验签正常，但 GitHub/CNB 显示「无法验证」。平台按 **committer 邮箱**关联用户，云原生环境注入的 `GIT_COMMITTER_EMAIL=cnb@cnb.local` 会让提交判 `no_user`。
+- **`no_user` / `unknown_key`（同源，最常见）**：本地 `git verify-commit` 正常，但平台显示「无法验证」。平台按 **committer 邮箱**关联用户并据其查找密钥：云原生环境注入的 `GIT_COMMITTER_EMAIL=cnb@cnb.local` 会让 GitHub 判 `no_user`、CNB 判 `unknown_key`——**此时签名密钥其实已登记，`unknown_key` 不等于缺公钥**，不要因此重新生成或上传密钥。
   - 检查：`git log -1 --format='%ae / %ce'`，committer 必须是账号已验证邮箱（`qixiaoxin@stu.sqxy.edu.cn`）。
-  - 修复：新版 `install_gpg_keys.sh`（上游 `XMZZUZHI/oidc-auth`）会把 author/committer 统一到签名密钥邮箱；当前 shell 执行 `source .git/gpg-commit-env.sh`（新终端由 `~/.bashrc` 自动生效）后再提交。
-- **`unknown_key`**：签名密钥未登记到平台。密钥须同时存在于 CNB 与 GitHub 账号；可分别用 `GET https://api.cnb.cool/user/gpg-keys`（`Accept: application/json` + `CNB_TOKEN`）和 `GET https://api.github.com/users/<login>/gpg_keys` 核对。**严禁自行生成新密钥**（新公钥未登记会被判 `unknown_key`）。
-- **重签已有提交**：`git rebase --force-rebase --gpg-sign origin/main`（普通 `rebase` 在分支已基于 main 时会 no-op，必须加 `--force-rebase`），随后对 CNB 与 GitHub 镜像两个远端 force-push，PR 会自动更新。
+  - 修复：`install_gpg_keys.sh` 会生成 `.git/gpg-commit-env.sh`；**必须在执行 `git commit` / `git rebase` 的同一条 shell 命令里**先 `source .git/gpg-commit-env.sh`——每次 Bash 工具调用都是新 shell，单独 source 后另起一条命令不生效，平台的 `GIT_COMMITTER_*` 会重新覆盖；`~/.bashrc` 只对交互式新终端生效。
+- **`unknown_key`（真正的未登记）**：仅当 committer 邮箱正确时才按密钥未登记排查。密钥须同时存在于 CNB 与 GitHub 账号；可分别用 `GET https://api.cnb.cool/user/gpg-keys`（`Accept: application/json` + `CNB_TOKEN`）和 `GET https://api.github.com/users/<login>/gpg_keys` 核对。注意签名常落在**子密钥**上：先 `git verify-commit --raw <sha>` 取实际指纹，再核对平台返回的 `subkeys`。**严禁自行生成新密钥**（新公钥未登记会被判 `unknown_key`）。
+- **重签已有提交 / 分支落后 main**：先 `source .git/gpg-commit-env.sh`，再 `git rebase --force-rebase --gpg-sign origin/main`（普通 `rebase` 在分支已基于 main 时会 no-op，必须加 `--force-rebase`）。rebase 同样受 committer 环境变量影响，**重签后务必复核 `%ce` 与 `git verify-commit`**；随后对 CNB 与 GitHub 镜像两个远端 force-push，全部提交 SHA 会变化，PR 自动更新。
 - **验证签名**：本地 `git verify-commit --raw <sha>` 应含 `GOODSIG` / `VALIDSIG`；GitHub `GET /repos/<owner>/<repo>/commits/<sha>` 的 `.commit.verification.verified` 与 CNB `GET /{repo}/-/git/commits/<sha>` 的 `.commit.verification.verified` 均应为 `true`。
 - **签名未通过禁止 push**；`.cnb.yml` 同步镜像时不会重签，CNB 与 GitHub 两侧看到的必须是同一份已签名历史。
 
