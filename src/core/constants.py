@@ -32,4 +32,8 @@ ACTION_REOPENED = "reopened"
 ACTION_PR_OPENED = "opened"
 ACTION_PR_CLOSED = "closed"
 ACTION_PR_REOPENED = "reopened"
-ACTION_PR_SYNCHRONIZED = "synchronized"
+# GitHub 的 PR 同步动作枚举值是美式拼写 synchronize（**无尾字母 d**），
+# 见 GitHub 文档 pull_request 事件的 activity types 与 webhook payload schema。
+# 历史问题（issue #4）：本常量曾误写为 synchronized，与 formatter 里的
+# synchronize 键拼写漂移，导致 🔀 分支永不命中；切勿再改回 synchronized。
+ACTION_PR_SYNCHRONIZE = "synchronize"
