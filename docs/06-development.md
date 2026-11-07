@@ -74,7 +74,7 @@ pre-commit run --all-files  # 手动对全仓库执行一次
 
 ### 添加新 Prompt 示例
 
-1. 在 `prompts/` 目录创建新的 markdown 文件
+1. 在 `templates/` 目录创建新的 markdown 文件
 2. 包含以下内容：
    - 提示词说明
    - 完整的提示词内容

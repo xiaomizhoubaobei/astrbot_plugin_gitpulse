@@ -21,8 +21,8 @@
 
 ## Prompt 示例
 
-查看 `prompts/` 目录获取预置的系统提示词：
-- [默认 Prompt](../prompts/default.md) - 通用 GitHub 事件消息生成提示词
+查看 `templates/` 目录获取预置的系统提示词：
+- [默认 Prompt](../templates/default.md) - 通用 GitHub 事件消息生成提示词
 
 ## 外部资源
 

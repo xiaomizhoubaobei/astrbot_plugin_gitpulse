@@ -158,9 +158,9 @@ GitHub 在配置 Webhook 时会自动发送 Ping 事件，插件会自动响应�
 
 ### 使用 Prompt 示例
 
-在 `prompts/` 目录中提供了预置的系统提示词：
+在 `templates/` 目录中提供了预置的系统提示词：
 
-- [默认 Prompt](../prompts/default.md) - 通用 GitHub 事件消息生成提示词
+- [默认 Prompt](../templates/default.md) - 通用 GitHub 事件消息生成提示词
 
 使用方法：
 1. 打开 Prompt 文件
