@@ -42,3 +42,8 @@ ENV/
 # AI 审计交接私钥（仅经 GitHub Secret 注入，严禁入库）
 ai-audit/handoff-private*.pem
 handoff-private*.pem
+
+# 本地 AstrBot 运行环境（源码克隆与运行时包，非本插件代码，不入库）
+# 注意：Linux 文件系统区分大小写，两个目录需分别忽略
+/AstrBot/
+/astrbot/
