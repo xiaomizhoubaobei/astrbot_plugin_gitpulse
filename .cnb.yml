@@ -73,3 +73,26 @@ main:
                 force: true
                 git_user: ${GIT_USERNAME}
                 git_email: ${GIT_EMAIL}
+
+      # PR 门禁：CNB 是实际合并入口，GitHub 镜像 PR 的 CI 无法阻止 CNB 合并，
+      # 故在 PR 阶段补齐最小检查（只跑测试与 pre-commit 规范检查）。
+      # 不引入密钥仓库 imports：PR 会执行不可信代码，本 job 不接触任何长期令牌；
+      # 覆盖率与安全扫描仍由 GitHub Actions 负责（AGENTS.md §10.8.2 / §10.8.3）。
+      pull_request:
+        unit-test:
+          name: 单元测试与代码规范
+          # 同一 PR 的旧运行自动取消，避免重复占用 runner
+          lock:
+            key: pr-test-$CNB_PULL_REQUEST_IID
+            cancel-in-progress: true
+          # 使用 python 镜像执行脚本，按 AGENTS.md §4.2 声明 docker 服务
+          services:
+            - docker
+          stages:
+            - name: 测试与检查
+              image: docker.cnb.cool/xmzzuzhi/cnb-docker/python:0.0.1
+              script:
+                - python -m pip install -U pip
+                - pip install -r requirements-dev.txt pre-commit
+                - python -m pytest tests -q
+                - pre-commit run --all-files
