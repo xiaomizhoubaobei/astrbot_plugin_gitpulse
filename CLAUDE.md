@@ -115,6 +115,40 @@ main.py: PluginEntry（@register 注册的 AstrBot 入口）
 - **验证签名**：本地 `git verify-commit --raw <sha>` 应含 `GOODSIG` / `VALIDSIG`；GitHub `GET /repos/<owner>/<repo>/commits/<sha>` 的 `.commit.verification.verified` 与 CNB `GET /{repo}/-/git/commits/<sha>` 的 `.commit.verification.verified` 均应为 `true`。
 - **签名未通过禁止 push**；`.cnb.yml` 同步镜像时不会重签，CNB 与 GitHub 两侧看到的必须是同一份已签名历史。
 
+### Issue 关闭与评论（CNB）
+
+关闭 Issue 前先判断问题是否仍然成立。若代码已修复，不要为了「按 Issue 修改」而制造无意义改动；应在评论中说明现状与已修复证据。
+
+- **关闭必须带说明**：先在 Issue 下发表评论，再修改状态；禁止只关闭不解释（避免协作者看不到关闭原因）。
+- **commit 引用强制可跳转**：评论中出现的提交号必须写成 Markdown 链接，禁止写成行内代码；链接使用完整 SHA：
+  `[<short-sha>](https://cnb.cool/<repo>/-/commit/<full-sha>)`。
+- **评论内容**应包含：问题现状、修复提交（若有，须带可跳转链接）、关键验证结果（如 `flake8` / `pytest`，或无需改动的依据）。
+- **链接或表述有误时更新原评论**，使用评论 PATCH 接口修正，不要重复刷评论。
+
+CNB API（`<repo>` 形如 `XMZZUZHI/Astrbot/astrbot_plugin_github_webhook`，请求头需 `Authorization: Bearer $CNB_TOKEN`、`Accept: application/json`、`Content-Type: application/json`）：
+
+```bash
+# 1. 关闭前先发表说明（Markdown 链接保证提交号可点击）
+curl -sS -X POST \
+  -H "Authorization: Bearer $CNB_TOKEN" \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{"body":"已在 [30d7510](https://cnb.cool/<repo>/-/commit/<full-sha>) 修复……"}' \
+  "https://api.cnb.cool/<repo>/-/issues/<number>/comments"
+
+# 2. 关闭 Issue（state 与 state_reason 必须同时提供）
+curl -sS -X PATCH \
+  -H "Authorization: Bearer $CNB_TOKEN" \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{"state":"closed","state_reason":"completed"}' \
+  "https://api.cnb.cool/<repo>/-/issues/<number>"
+```
+
+- `state_reason` 取值：`completed`（已完成）、`not_planned`（不计划修复）、`reopened`（重新打开）。
+- 更新已发表的评论：`PATCH https://api.cnb.cool/<repo>/-/issues/<number>/comments/<comment_id>`，body 为 `{"body":"..."}`。
+- 关闭后复核：`GET https://api.cnb.cool/<repo>/-/issues/<number>` 的 `state` 应为 `closed`、`comment_count` 至少为 1；必要时抓取 Issue 页面确认 Markdown 链接已正确渲染。
+
 ## CI 概览
 
 - `.github/workflows/coverage.yml`：push/PR 到 `main` 时在 Python 3.12/3.13/3.14 上跑测试，`--source=src` 统计覆盖率，仅 3.12 上报 Codecov（`codecov.yml`，项目/补丁门禁均为 informational）。
