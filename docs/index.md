@@ -18,6 +18,7 @@
 - [项目结构](07-project-structure.md) - 了解插件的代码组织
 - [开发计划与贡献指南](06-development.md) - 贡献指南和路线图
 - [GPG 签名验证指南](GPG_VERIFICATION.md) - 提交真实性核验与强制签名规范
+- [无障碍声明](../ACCESSIBILITY.md) - 无障碍目标、已知限制与问题反馈渠道
 
 ## Prompt 示例
 

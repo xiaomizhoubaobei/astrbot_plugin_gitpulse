@@ -111,6 +111,7 @@ astrbot_plugin_gitpulse/
 ├── docs/                      # 详细文档
 ├── templates/                 # Prompt 模板
 ├── tests/                     # 测试代码
+├── ACCESSIBILITY.md           # 无障碍声明
 ├── LICENSE                    # MIT 许可证
 └── README.md                  # 本文件
 ```
@@ -132,6 +133,10 @@ astrbot_plugin_gitpulse/
 - [x] Agent 集成（智能消息生成）
 - [ ] 分支过滤（仅监听 main 分支）
 - [ ] 多目标支持（不同事件发到不同群组）
+
+## 无障碍
+
+我们致力于让 GitPulse 的消息与文档更易读。无障碍目标、已知限制、贡献要求和问题反馈渠道见 [无障碍声明](ACCESSIBILITY.md)。
 
 ## 贡献
 

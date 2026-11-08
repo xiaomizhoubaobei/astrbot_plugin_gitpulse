@@ -8,6 +8,9 @@
 ## [未发布]
 
 ### 新增
+- 新增 `ACCESSIBILITY.md` 无障碍声明，说明无障碍目标、适用范围、已知限制、贡献要求与问题反馈渠道
+  - README、文档索引与 `CHANGELOG.md` 同步补充入口
+  - GitHub Community Standards 会自动将根目录声明识别为无障碍页面
 - 新增 `bind_host` 配置项，Webhook 监听地址不再硬编码（默认 `0.0.0.0`，可改为 `127.0.0.1` 配合反向代理）
   - 修复 `security-scan` 长期红灯：Bandit `B104`（Possible binding to all interfaces）命中 `src/core/plugin.py`
   - 默认值集中到 `src/core/constants.py:DEFAULT_BIND_HOST`，配置项缺失时按默认值兜底
