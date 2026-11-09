@@ -5,6 +5,14 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 规范。
 
+## [0.0.2] - 2026-11-09
+
+### 修复
+- 修复 Release Notes「安装方法」代码块未闭合，导致「证据包说明」被整体渲染进代码块的问题
+
+### 更改
+- 按当前 black 版本格式化 `tests/test_event_filter.py` 与 `tests/test_release_formatter.py`（仅格式，无逻辑变化）
+
 ## [0.0.1] - 2026-10-12
 
 ### 更改
