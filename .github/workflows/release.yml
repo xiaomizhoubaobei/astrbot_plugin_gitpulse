@@ -328,7 +328,9 @@ jobs:
           fi
 
           # 添加 Release Notes
-          RELEASE_FOOTER="\n\n---\n\n### 📥 安装方法\n\n\`\`\`bash\n# 下载插件包后，将其放入 AstrBot 的 plugins 目录\n# 然后重启 AstrBot 服务\n"
+          # 代码块必须闭合，否则后续「证据包说明」会被整体吞进 bash 代码块，
+          # Release 页面渲染成一大段代码文本。
+          RELEASE_FOOTER="\n\n---\n\n### 📥 安装方法\n\n\`\`\`bash\n# 下载插件包后，将其放入 AstrBot 的 plugins 目录\n# 然后重启 AstrBot 服务\n\`\`\`\n"
 
           NOTES="${NOTES}${RELEASE_FOOTER}"
 

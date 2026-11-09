@@ -21,9 +21,7 @@ def test_comma_separated_string():
 
 def test_json_array_string():
     """JSON 数组写法同样支持."""
-    assert parse_enabled_events('["push", "release"]') == frozenset(
-        {"push", "release"}
-    )
+    assert parse_enabled_events('["push", "release"]') == frozenset({"push", "release"})
 
 
 def test_list_input():

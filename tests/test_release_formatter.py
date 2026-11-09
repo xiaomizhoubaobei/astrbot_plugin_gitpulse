@@ -36,9 +36,7 @@ def test_action_emoji_and_content(action, emoji):
 
 def test_unknown_action_falls_back_to_default_emoji():
     """未知动作使用默认 emoji."""
-    message = format_release_message(
-        "unknown", "alice", "owner/repo", "v1.0.0", "", ""
-    )
+    message = format_release_message("unknown", "alice", "owner/repo", "v1.0.0", "", "")
 
     assert message.startswith("📦 GitHub Release Event")
     assert "🏷️ v1.0.0" in message
