@@ -8,6 +8,7 @@ set -e
 # 默认配置
 DEFAULT_HOST="localhost"
 DEFAULT_PORT="8080"
+DEFAULT_PATH="/webhook"
 DEFAULT_SECRET=""
 
 # 颜色输出
@@ -27,6 +28,7 @@ GitHub Webhook 测试脚本
 选项:
     -H, --host HOST       服务器地址 (默认: localhost)
     -p, --port PORT       服务器端口 (默认: 8080)
+    -P, --path PATH       Webhook 路径 (默认: /webhook)
     -s, --secret SECRET   Webhook 密钥 (默认: 无)
     -v, --verbose         详细输出
     -h, --help            显示帮助信息
@@ -44,6 +46,9 @@ GitHub Webhook 测试脚本
     # 发送 PR 事件到指定端口
     $0 -p 6100 pr
 
+    # 发送到自定义 webhook 路径
+    $0 -P /github/webhook ping
+
     # 带密钥的测试
     $0 -s "my-secret" issues
 
@@ -56,6 +61,7 @@ EOF
 # 解析参数
 HOST="$DEFAULT_HOST"
 PORT="$DEFAULT_PORT"
+WEBHOOK_PATH="$DEFAULT_PATH"
 SECRET="$DEFAULT_SECRET"
 VERBOSE=false
 EVENT_TYPE=""
@@ -68,6 +74,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -p|--port)
             PORT="$2"
+            shift 2
+            ;;
+        -P|--path)
+            WEBHOOK_PATH="$2"
             shift 2
             ;;
         -s|--secret)
@@ -101,8 +111,11 @@ if [[ -z "$EVENT_TYPE" ]]; then
     exit 1
 fi
 
-# 构建 Webhook URL
-WEBHOOK_URL="http://${HOST}:${PORT}/webhook"
+# 构建 Webhook URL（路径未以 / 开头时自动补上）
+if [[ "$WEBHOOK_PATH" != /* ]]; then
+    WEBHOOK_PATH="/${WEBHOOK_PATH}"
+fi
+WEBHOOK_URL="http://${HOST}:${PORT}${WEBHOOK_PATH}"
 
 echo -e "${GREEN}=== GitHub Webhook 测试 ===${NC}"
 echo "事件类型: $EVENT_TYPE"

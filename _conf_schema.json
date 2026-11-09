@@ -11,6 +11,12 @@
     "default": "0.0.0.0",
     "hint": "Webhook 服务绑定的网卡地址。默认 0.0.0.0 监听全部网卡（GitHub 需从外部访问）；若使用 Nginx/Caddy 反向代理，可改为 127.0.0.1 仅监听本机。"
   },
+  "webhook_path": {
+    "description": "Webhook 路径",
+    "type": "string",
+    "default": "/webhook",
+    "hint": "接收 GitHub webhook 的路径，用于与 AstrBot 共用域名并统一反向代理分发。默认 /webhook；例如设为 /github/webhook 后，GitHub Payload URL 需同步改为 https://你的域名/github/webhook。"
+  },
   "target_umo": {
     "description": "目标 UMO",
     "type": "string",

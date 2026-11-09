@@ -88,7 +88,7 @@ pre-commit run --all-files  # 手动对全仓库执行一次
 ### 本地测试
 
 1. 启动 AstrBot 并加载插件
-2. 使用 curl 测试 Webhook 端点：
+2. 使用 curl 测试 Webhook 端点（路径需与 `webhook_path` 配置一致，默认 `/webhook`）：
    ```bash
    curl -X POST http://localhost:8080/webhook \
      -H "Content-Type: application/json" \

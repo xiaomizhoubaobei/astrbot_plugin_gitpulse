@@ -175,6 +175,33 @@ server {
 Payload URL: https://your-domain.com/webhook
 ```
 
+### 与 AstrBot 共用域名（webhook_path）
+
+AstrBot 的统一 Webhook 机制面向官方平台适配器，插件的 Web API 需要 Dashboard
+登录鉴权，GitHub 无法直接调用。若希望减少对外暴露的端口，可把插件配置为
+`bind_host: 127.0.0.1` + `webhook_path: /github/webhook`，再在主域名反向代理中
+统一分发：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name your-domain.com;
+
+    # 已有 AstrBot Dashboard / 平台回调配置保持不变
+
+    location /github/ {
+        proxy_pass http://127.0.0.1:8080/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+此时 GitHub Payload URL 填 `https://your-domain.com/github/webhook`，
+无需为插件单独放行端口或申请新域名。
+
 ## 相关文档
 
 - [安装指南](01-installation.md) - 基础安装步骤

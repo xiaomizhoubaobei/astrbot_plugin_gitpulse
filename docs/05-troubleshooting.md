@@ -37,6 +37,8 @@ sudo systemctl restart astrbot
 ```
 ============================================================
 GitHub Webhook: Configuration loaded
+  bind_host: 0.0.0.0:8080
+  webhook_path: /webhook
   target_umo: platform_id:GroupMessage:1078537517
   enable_agent: True
   llm_provider_id: openai:gpt-4

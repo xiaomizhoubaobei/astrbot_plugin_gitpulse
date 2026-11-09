@@ -4,10 +4,13 @@ import hashlib
 import hmac
 import json
 
+import aiohttp
 import pytest
 
 import src.core.plugin as plugin_module
 import src.services.llm_service as llm_service
+from src.core.config import normalize_webhook_path
+from src.core.constants import DEFAULT_WEBHOOK_PATH
 from src.core.plugin import GitHubWebhookPlugin
 
 # 测试只监听回环地址，避免在 CI 环境中暴露端口；DevSkim 把该地址字面量
@@ -74,6 +77,7 @@ def _make_plugin(context=None, **overrides):
     config = {
         "port": 0,
         "bind_host": _LOOPBACK_HOST,
+        "webhook_path": DEFAULT_WEBHOOK_PATH,
         "target_umo": "test:GroupMessage:1",
         "webhook_secret": "",
         "rate_limit": 0,
@@ -102,6 +106,41 @@ def test_rate_limiter_follows_config():
     """rate_limit <= 0 时不装配限流器，正数时装配."""
     assert _make_plugin(rate_limit=0).rate_limiter is None
     assert _make_plugin(rate_limit=5).rate_limiter is not None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, DEFAULT_WEBHOOK_PATH),
+        ("", DEFAULT_WEBHOOK_PATH),
+        ("   ", DEFAULT_WEBHOOK_PATH),
+        (123, DEFAULT_WEBHOOK_PATH),
+        ("webhook", "/webhook"),
+        ("/github/webhook", "/github/webhook"),
+        ("/github/webhook/", "/github/webhook"),
+        ("  /custom  ", "/custom"),
+        ("/", "/"),
+        ("/bad path", DEFAULT_WEBHOOK_PATH),
+        ("/hook?x=1", DEFAULT_WEBHOOK_PATH),
+        ("/hook/{id}", DEFAULT_WEBHOOK_PATH),
+    ],
+)
+def test_normalize_webhook_path(raw, expected):
+    """路径配置应补前导斜杠、去尾斜杠，非法值回落到默认路径."""
+    assert normalize_webhook_path(raw) == expected
+
+
+def test_custom_webhook_path_is_registered():
+    """自定义 webhook_path 应成为唯一注册的 POST 路由，旧路径不再注册."""
+    plugin = _make_plugin(webhook_path="/github/webhook")
+
+    paths = {
+        route.resource.canonical
+        for route in plugin.app.router.routes()
+        if route.resource is not None
+    }
+
+    assert paths == {"/github/webhook"}
 
 
 @pytest.mark.asyncio
@@ -388,5 +427,38 @@ async def test_start_server_and_terminate():
         await plugin.start_server()
         assert plugin.site is not None
         assert plugin.site is not first_site
+    finally:
+        await plugin.terminate()
+
+
+@pytest.mark.asyncio
+async def test_custom_webhook_path_serves_requests():
+    """自定义路径实际生效：新路径返回 Pong，默认 /webhook 返回 404."""
+    plugin = _make_plugin(
+        port=0,
+        bind_host=_LOOPBACK_HOST,
+        webhook_path="/github/webhook",
+    )
+    try:
+        await plugin.start_server()
+        assert plugin.runner is not None
+        port = plugin.runner.addresses[0][1]
+        base_url = f"http://{_LOOPBACK_HOST}:{port}"
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{base_url}/github/webhook",
+                headers={"X-GitHub-Event": "ping"},
+                data=b"{}",
+            ) as response:
+                assert response.status == 200
+                assert await response.text() == "Pong"
+
+            async with session.post(
+                f"{base_url}/webhook",
+                headers={"X-GitHub-Event": "ping"},
+                data=b"{}",
+            ) as response:
+                assert response.status == 404
     finally:
         await plugin.terminate()

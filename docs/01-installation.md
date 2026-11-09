@@ -40,6 +40,7 @@ uv pip install -r requirements.txt
 {
   "port": 8080,
   "bind_host": "0.0.0.0",
+  "webhook_path": "/webhook",
   "target_umo": "platform_id:GroupMessage:群号",
   "webhook_secret": "your_github_webhook_secret",
   "rate_limit": 10
@@ -76,6 +77,7 @@ sudo systemctl restart astrbot
 
 - **Payload URL**: `http://你的服务器IP:配置的端口/webhook`
   - 例如：`http://123.45.67.89:8080/webhook`
+  - 若配置了自定义 `webhook_path`（如 `/github/webhook`），请使用对应路径
 - **Content type**: `application/json`
 - **Secret** (强烈推荐): 配置 Webhook 密钥用于签名验证
   1. 在插件配置中设置 `webhook_secret` 字段

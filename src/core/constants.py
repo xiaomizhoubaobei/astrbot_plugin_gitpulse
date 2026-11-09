@@ -11,6 +11,11 @@ DEFAULT_PORT = 8080
 # 默认值而非疏漏，按 bandit 官方方式就地标注 nosec。
 DEFAULT_BIND_HOST = "0.0.0.0"  # nosec B104
 
+# Webhook 路由路径的默认值。
+# 允许用户改成 /github/webhook 之类的前缀，便于与 AstrBot 共用同一个域名
+# 和反向代理；默认值保持向后兼容。
+DEFAULT_WEBHOOK_PATH = "/webhook"
+
 # Default rate limit (requests per minute)
 DEFAULT_RATE_LIMIT = 10
 

@@ -25,6 +25,30 @@ Webhook 服务器绑定的网卡地址。
 > 安全建议：若不需要直接从公网访问，改成 `127.0.0.1` 再由反向代理转发，
 > 可显著收敛暴露面。留空或删除该项时按默认值 `0.0.0.0` 处理。
 
+### webhook_path
+
+**类型**: `string` | **默认值**: `"/webhook"`
+
+接收 GitHub Webhook 的 HTTP 路径。用于与 AstrBot 共用同一个域名和反向代理入口。
+
+- 默认 `/webhook`，与旧版本行为一致
+- 可配置为带前缀的路径（如 `/github/webhook`），由主域名统一分发：
+
+  ```nginx
+  location /github/ {
+      proxy_pass http://127.0.0.1:8080/;
+  }
+  ```
+
+  此时 GitHub 的 Payload URL 填 `https://your-domain.com/github/webhook`。
+- 自动补齐前导 `/`、去掉尾部 `/`；包含空白、查询串或 `{}` 等非法字符时回落默认值
+- 修改后需同步更新 GitHub 仓库 Webhook 的 Payload URL 并重启 AstrBot
+
+> 关于 AstrBot 统一 Webhook：该机制面向官方平台适配器（如 QQ 官方机器人），
+> 插件的 Web API 路由需要 Dashboard 登录鉴权，GitHub 无法携带此类凭据调用。
+> 因此本插件仍使用独立 HTTP 服务，但可通过 `webhook_path` + `bind_host`
+> 与 AstrBot 共用反向代理和域名。
+
 ### target_umo
 
 **类型**: `string` | **默认值**: `""` (必填)

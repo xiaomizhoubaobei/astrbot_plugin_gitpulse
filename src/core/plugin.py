@@ -22,11 +22,11 @@ class GitHubWebhookPlugin(Star):
     def __init__(self, context: Context, config):
         """初始化插件：装配 aiohttp 应用与限流器."""
         super().__init__(context)
+        self.cfg = PluginConfig(config)
         self.app = web.Application()
-        self.app.router.add_post("/webhook", self.handle_webhook)
+        self.app.router.add_post(self.cfg.webhook_path, self.handle_webhook)
         self.runner: web.AppRunner | None = None
         self.site: web.TCPSite | None = None
-        self.cfg = PluginConfig(config)
 
         # rate_limit <= 0 表示不启用限流，此时显式置空以便下游判空
         self.rate_limiter: RateLimiter | None = None
@@ -51,7 +51,7 @@ class GitHubWebhookPlugin(Star):
         await self.site.start()
         logger.info(
             f"GitHub Webhook: Server started on "
-            f"{self.cfg.bind_host}:{self.cfg.port}"
+            f"{self.cfg.bind_host}:{self.cfg.port}{self.cfg.webhook_path}"
         )
 
     async def handle_webhook(self, request: web.Request):

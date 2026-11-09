@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概览
 
-GitPulse 是一个 **AstrBot 插件**（Python 3.12+），用于接收 GitHub Webhook（`push` / `issues` / `pull_request` / `ping`），格式化为聊天消息后转发到 AstrBot 指定会话；可选通过 AstrBot 的 LLM 能力改写消息。插件不是独立进程——由 AstrBot 加载后，自己启动一个 aiohttp HTTP 服务监听 `/webhook`。
+GitPulse 是一个 **AstrBot 插件**（Python 3.12+），用于接收 GitHub Webhook（`push` / `issues` / `pull_request` / `ping`），格式化为聊天消息后转发到 AstrBot 指定会话；可选通过 AstrBot 的 LLM 能力改写消息。插件不是独立进程——由 AstrBot 加载后，自己启动一个 aiohttp HTTP 服务监听配置路径 `webhook_path`（默认 `/webhook`）。
 
 **`AGENTS.md` 是本仓库的权威工程规范**（提交信息、GPG 强制签名、PR 流程、CI 口径、目录约定），优先级高于本文件；动手前先读相关章节。
 
@@ -47,7 +47,7 @@ pre-commit run --all-files
 ```
 main.py: PluginEntry（@register 注册的 AstrBot 入口）
   └─ src/core/plugin.py: GitHubWebhookPlugin
-       ├─ aiohttp app，仅 POST /webhook
+       ├─ aiohttp app，仅 POST <webhook_path>（默认 /webhook）
        ├─ src/utils/rate_limiter.py     滑动窗口限流
        ├─ src/utils/verify_signature.py HMAC-SHA256 验签
        ├─ src/handlers/*                从 payload 提取字段
@@ -83,6 +83,7 @@ main.py: PluginEntry（@register 注册的 AstrBot 入口）
 - **动作常量必须与 GitHub 真实枚举一致**：PR 同步动作是 `synchronize`（无尾字母 d，见 `ACTION_PR_SYNCHRONIZE`），formatter 的 emoji 映射键一律引用 `src/core/constants.py`，不要写回硬编码字符串，否则会再次出现「🔀 永不命中」。
 - **配置缺失兜底**：宿主 `AstrBotConfig` 对缺失键返回 `None`，`ConfigNode` 按字段类型注解给出零值兜底；`bind_host` 是 property（缺省回落 `DEFAULT_BIND_HOST`），不要改成普通字段。
 - **默认监听 `0.0.0.0`** 是有意为之（GitHub 需从外部访问），`src/core/constants.py` 中带 `# nosec B104`；暴露面用 `bind_host` 配置收敛。
+- **`webhook_path` 是路由的唯一来源**（默认 `/webhook`）：归一化逻辑在 `src/core/config.py:normalize_webhook_path`，补前导 `/`、去尾 `/`，含空白/查询串/`{}` 等非法字符时回落默认值。AstrBot 的统一 Webhook 面向平台适配器，插件 Web API 需 Dashboard 鉴权，GitHub 无法调用，因此插件仍用独立 aiohttp 服务；与 AstrBot 共用域名时用 `bind_host: 127.0.0.1` + `webhook_path` 走同一反向代理。
 - **LLM 是可选增强**：任何 LLM 异常、空输出、超时，或输出丢失模板中的核心链接，都必须回落到模板消息，不能让 webhook 请求失败。
 - **测试约定**：测试用 `from src.xxx import ...`；formatter/常量这类纯逻辑直接单测，新增动作映射时同步补参数化用例。
 

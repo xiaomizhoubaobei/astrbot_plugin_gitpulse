@@ -2,12 +2,38 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import MutableMapping
 from typing import Any, get_type_hints
 
 from astrbot.api import AstrBotConfig, logger
 
-from .constants import DEFAULT_BIND_HOST
+from .constants import DEFAULT_BIND_HOST, DEFAULT_WEBHOOK_PATH
+
+# 仅允许普通的 URL 路径字符：排除空白、查询串、片段以及 aiohttp 的
+# 动态路由标记（{}），避免用户配置意外生成通配路由。
+_WEBHOOK_PATH_PATTERN = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$")
+
+
+def normalize_webhook_path(raw: Any) -> str:
+    """归一化 webhook 路由路径：补前导斜杠、去尾斜杠，非法值回落默认值."""
+    if not isinstance(raw, str):
+        return DEFAULT_WEBHOOK_PATH
+
+    path = raw.strip()
+    if not path:
+        return DEFAULT_WEBHOOK_PATH
+    if not path.startswith("/"):
+        path = f"/{path}"
+    path = path.rstrip("/") or "/"
+
+    if not _WEBHOOK_PATH_PATTERN.fullmatch(path):
+        logger.warning(
+            f"GitHub Webhook: Invalid webhook_path {raw!r}, "
+            f"falling back to {DEFAULT_WEBHOOK_PATH}"
+        )
+        return DEFAULT_WEBHOOK_PATH
+    return path
 
 
 class ConfigNode:
@@ -89,6 +115,16 @@ class PluginConfig(ConfigNode):
         raw = self._data.get("bind_host")
         return str(raw) if raw else DEFAULT_BIND_HOST
 
+    @property
+    def webhook_path(self) -> str:
+        """Webhook 路由路径：未配置或非法时回落到 ``/webhook``.
+
+        与 ``bind_host`` 相同，不做类型注解，避免与 property 同名冲突。
+        配置成 ``/github/webhook`` 这类前缀后，可与 AstrBot 共用同一个
+        域名和反向代理入口。
+        """
+        return normalize_webhook_path(self._data.get("webhook_path"))
+
     def __init__(self, cfg: AstrBotConfig):
         """基于 AstrBotConfig 装载配置并输出启动日志."""
         super().__init__(cfg)
@@ -96,6 +132,7 @@ class PluginConfig(ConfigNode):
         logger.info("=" * 60)
         logger.info("GitHub Webhook: Configuration loaded")
         logger.info(f"  bind_host: {self.bind_host}:{self.port}")
+        logger.info(f"  webhook_path: {self.webhook_path}")
         logger.info(f"  target_umo: {self.target_umo}")
         logger.info(f"  enable_agent: {self.enable_agent}")
         logger.info(f"  llm_provider_id: {self.llm_provider_id or '(default)'}")
