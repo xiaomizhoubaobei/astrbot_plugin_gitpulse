@@ -55,3 +55,19 @@ def test_missing_or_malformed_header_returns_false(signature_header):
 def test_missing_secret_returns_false():
     """未配置 secret 时不应判定为验签通过."""
     assert verify_signature(_PAYLOAD, _sign(_PAYLOAD, _SECRET), "") is False
+
+
+def test_uses_constant_time_comparison(monkeypatch):
+    """验签必须走 hmac.compare_digest，避免退化为 == 引入时序侧信道."""
+    real_compare = hmac.compare_digest
+    calls = []
+
+    def spy(expected: str, actual: str) -> bool:
+        calls.append((expected, actual))
+        return real_compare(expected, actual)
+
+    monkeypatch.setattr(hmac, "compare_digest", spy)
+
+    assert verify_signature(_PAYLOAD, _sign(_PAYLOAD, _SECRET), _SECRET) is True
+    assert len(calls) == 1
+    assert calls[0][0] == calls[0][1]
