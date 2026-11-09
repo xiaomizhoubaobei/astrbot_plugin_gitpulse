@@ -20,8 +20,14 @@ def _missing_urls(original: str, generated: str) -> set[str]:
     return _extract_urls(original) - _extract_urls(generated)
 
 
-async def send_with_agent(plugin_instance, message: str, data: dict, event_type: str):
-    """使用 LLM 生成个性化消息并发送."""
+async def send_with_agent(
+    plugin_instance,
+    message: str,
+    data: dict,
+    event_type: str,
+    target_umos: list[str] | None = None,
+):
+    """使用 LLM 生成个性化消息并发送到路由得到的目标会话."""
     try:
         # 构建 LLM 输入信息 - 优化结构，确保 GitHub 事件内容优先级最高
         llm_input = f"""GitHub 事件信息：
@@ -67,7 +73,7 @@ async def send_with_agent(plugin_instance, message: str, data: dict, event_type:
                 logger.warning(
                     f"GitHub Webhook: Failed to get default provider: {e}, falling back to template"
                 )
-                await plugin_instance.send_message(message)
+                await plugin_instance.send_message(message, target_umos)
                 return
 
         # 调用 LLM
@@ -122,7 +128,7 @@ async def send_with_agent(plugin_instance, message: str, data: dict, event_type:
                             f"{', '.join(sorted(missing_urls))}; "
                             f"falling back to template"
                         )
-                        await plugin_instance.send_message(message)
+                        await plugin_instance.send_message(message, target_umos)
                     else:
                         generated_message = text_content
                         logger.info(
@@ -133,13 +139,13 @@ async def send_with_agent(plugin_instance, message: str, data: dict, event_type:
                     logger.warning(
                         "GitHub Webhook: LLM returned empty content, falling back to template"
                     )
-                    await plugin_instance.send_message(message)
+                    await plugin_instance.send_message(message, target_umos)
             else:
                 logger.warning(
                     "GitHub Webhook: LLM returned None or empty completion, "
                     "falling back to template"
                 )
-                await plugin_instance.send_message(message)
+                await plugin_instance.send_message(message, target_umos)
 
         except asyncio.TimeoutError:
             logger.error(
@@ -147,10 +153,10 @@ async def send_with_agent(plugin_instance, message: str, data: dict, event_type:
                 f"{plugin_instance.cfg.agent_timeout} seconds, "
                 f"falling back to template"
             )
-            await plugin_instance.send_message(message)
+            await plugin_instance.send_message(message, target_umos)
 
     except Exception as e:
         # LLM 调用失败，使用模板作为降级方案
         logger.error(f"GitHub Webhook: LLM invocation failed: {e}")
         logger.error("GitHub Webhook: Falling back to default template")
-        await plugin_instance.send_message(message)
+        await plugin_instance.send_message(message, target_umos)

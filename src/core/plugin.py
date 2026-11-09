@@ -11,6 +11,7 @@ from astrbot.api.star import Context, Star
 from ..handlers.issues_handler import handle_issues_event
 from ..handlers.pull_request_handler import handle_pull_request_event
 from ..handlers.push_handler import handle_push_event
+from ..services.repo_router import get_repo_full_name, resolve_target_umos
 from ..utils.rate_limiter import RateLimiter
 from ..utils.verify_signature import verify_signature
 from .config import PluginConfig
@@ -124,36 +125,52 @@ class GitHubWebhookPlugin(Star):
             return web.Response(status=500, text="Internal server error")
 
         if message:
+            target_umos = resolve_target_umos(
+                get_repo_full_name(data), self.cfg.repo_routes, self.cfg.target_umo
+            )
             if self.cfg.enable_agent:
                 from ..services.llm_service import send_with_agent
 
-                await send_with_agent(self, message, data, event_type)
+                await send_with_agent(self, message, data, event_type, target_umos)
             else:
-                await self.send_message(message)
+                await self.send_message(message, target_umos)
 
         return web.Response(status=200, text="OK")
 
-    async def send_message(self, message: str):
-        """按纯文本回包到配置的会话目标."""
-        if not self.cfg.target_umo:
-            logger.error(
-                "GitHub Webhook: Cannot send message - target_umo not configured"
-            )
+    async def send_message(self, message: str, target_umos: list[str] | None = None):
+        """按仓库路由得到的 UMO 列表分发消息；未指定时回落到 target_umo."""
+        if target_umos is None:
+            target_umos = [self.cfg.target_umo]
+
+        targets = [umo for umo in target_umos if umo]
+        if not targets:
+            if target_umos:
+                logger.error(
+                    "GitHub Webhook: Cannot send message - target_umo not configured"
+                )
+            else:
+                logger.info(
+                    "GitHub Webhook: No target UMO matched this repository, "
+                    "message dropped"
+                )
             return
 
+        for target_umo in targets:
+            await self._send_to_target(target_umo, message)
+
+    async def _send_to_target(self, target_umo: str, message: str):
+        """向单个 UMO 发送纯文本消息；单目标失败不影响其它目标."""
         try:
             message_chain = api.MessageChain([Plain(message)])
-            result = await self.context.send_message(self.cfg.target_umo, message_chain)
+            result = await self.context.send_message(target_umo, message_chain)
             logger.info(
-                f"GitHub Webhook: Message sent to {self.cfg.target_umo}, result: {result}"
+                f"GitHub Webhook: Message sent to {target_umo}, result: {result}"
             )
             if not result:
-                logger.warning(
-                    f"GitHub Webhook: Platform not found for {self.cfg.target_umo}"
-                )
+                logger.warning(f"GitHub Webhook: Platform not found for {target_umo}")
         except Exception as e:
             # 记录完整错误信息但不传播异常
-            logger.error(f"GitHub Webhook: Failed to send message: {e}")
+            logger.error(f"GitHub Webhook: Failed to send message to {target_umo}: {e}")
             logger.error(f"GitHub Webhook: Error type: {type(e).__name__}")
             logger.error(f"GitHub Webhook: Error details: {str(e)}")
 

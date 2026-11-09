@@ -52,7 +52,8 @@ main.py: PluginEntry（@register 注册的 AstrBot 入口）
        ├─ src/utils/verify_signature.py HMAC-SHA256 验签
        ├─ src/handlers/*                从 payload 提取字段
        ├─ src/formatters/*              纯函数：字段 → 消息文本
-       └─ 发送：context.send_message(target_umo)
+       └─ 发送：context.send_message(<repo_routes 解析后的 UMO>)
+            ├─ src/services/repo_router.py 解析 repo_routes（精确 → owner/* → * → target_umo）
             └─ enable_agent 时先经 src/services/llm_service.py 改写
 ```
 
@@ -84,6 +85,7 @@ main.py: PluginEntry（@register 注册的 AstrBot 入口）
 - **配置缺失兜底**：宿主 `AstrBotConfig` 对缺失键返回 `None`，`ConfigNode` 按字段类型注解给出零值兜底；`bind_host` 是 property（缺省回落 `DEFAULT_BIND_HOST`），不要改成普通字段。
 - **默认监听 `0.0.0.0`** 是有意为之（GitHub 需从外部访问），`src/core/constants.py` 中带 `# nosec B104`；暴露面用 `bind_host` 配置收敛。
 - **`webhook_path` 是路由的唯一来源**（默认 `/webhook`）：归一化逻辑在 `src/core/config.py:normalize_webhook_path`，补前导 `/`、去尾 `/`，含空白/查询串/`{}` 等非法字符时回落默认值。AstrBot 的统一 Webhook 面向平台适配器，插件 Web API 需 Dashboard 鉴权，GitHub 无法调用，因此插件仍用独立 aiohttp 服务；与 AstrBot 共用域名时用 `bind_host: 127.0.0.1` + `webhook_path` 走同一反向代理。
+- **多目标发送**：`repo_routes`（JSON 文本）由 `src/services/repo_router.py` 解析，匹配顺序为精确仓库 → `owner/*` → `*` → `target_umo`；空数组表示静音。`send_message(message, target_umos)` 逐目标发送且单目标失败不阻塞其它目标，LLM 链路同样把 `target_umos` 透传到降级发送，勿改回只读 `target_umo`。
 - **LLM 是可选增强**：任何 LLM 异常、空输出、超时，或输出丢失模板中的核心链接，都必须回落到模板消息，不能让 webhook 请求失败。
 - **测试约定**：测试用 `from src.xxx import ...`；formatter/常量这类纯逻辑直接单测，新增动作映射时同步补参数化用例。
 

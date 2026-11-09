@@ -42,6 +42,7 @@ uv pip install -r requirements.txt
   "bind_host": "0.0.0.0",
   "webhook_path": "/webhook",
   "target_umo": "platform_id:GroupMessage:群号",
+  "repo_routes": "",
   "webhook_secret": "your_github_webhook_secret",
   "rate_limit": 10
 }

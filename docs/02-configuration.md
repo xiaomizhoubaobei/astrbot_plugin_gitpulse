@@ -54,6 +54,7 @@ Webhook 服务器绑定的网卡地址。
 **类型**: `string` | **默认值**: `""` (必填)
 
 目标会话标识符（UMO），指定 GitHub 事件消息发送到哪个群组或用户。
+配置 `repo_routes` 后，未命中任何路由的仓库会回落到该目标。
 
 **格式**: `platform_id:message_type:session_id`
 
@@ -61,6 +62,37 @@ Webhook 服务器绑定的网卡地址。
 1. 加入目标群组
 2. 在群组中发送命令：`/sid`
 3. AstrBot 会返回当前会话的 UMO
+
+### repo_routes
+
+**类型**: `text` | **默认值**: `""`（不启用多仓库路由）
+
+多仓库路由表（Repo -> UMO 映射），用于把不同仓库或组织的 GitHub 事件分发到不同群聊/私聊。
+
+**格式**：JSON 对象，键为仓库全名，值为 UMO 字符串或 UMO 字符串数组。
+
+```json
+{
+  "owner/repo_a": ["platform:GroupMessage:123"],
+  "owner/repo_b": ["platform:GroupMessage:456", "platform:FriendMessage:789"],
+  "owner/*": ["platform:GroupMessage:999"],
+  "*": ["platform:GroupMessage:000"]
+}
+```
+
+**匹配顺序**：
+
+1. 精确仓库：`owner/repo`
+2. 组织通配：`owner/*`
+3. 全局通配：`*`
+4. 兜底：`target_umo`
+
+**其他约定**：
+
+- 仓库名匹配不区分大小写
+- 值为空数组（`[]`）表示该仓库显式静音，不发送消息，也不会回落到 `target_umo`
+- 命中多个目标时逐一分发；单个目标发送失败不影响其它目标
+- 单条配置非法（键格式错误、值不是字符串/字符串数组）时跳过该条并记录告警，其它条目照常生效
 
 ### webhook_secret
 

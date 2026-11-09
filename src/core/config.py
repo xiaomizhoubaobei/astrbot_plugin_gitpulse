@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import re
 from collections.abc import MutableMapping
+from functools import cached_property
 from typing import Any, get_type_hints
 
 from astrbot.api import AstrBotConfig, logger
 
+from ..services.repo_router import parse_repo_routes
 from .constants import DEFAULT_BIND_HOST, DEFAULT_WEBHOOK_PATH
 
 # 仅允许普通的 URL 路径字符：排除空白、查询串、片段以及 aiohttp 的
@@ -125,6 +127,15 @@ class PluginConfig(ConfigNode):
         """
         return normalize_webhook_path(self._data.get("webhook_path"))
 
+    @cached_property
+    def repo_routes(self) -> dict[str, list[str]]:
+        """仓库到目标 UMO 列表的路由映射（``repo_routes`` 配置解析结果）.
+
+        配置为 JSON 文本，WebUI 无法渲染任意映射类型，故以 text 存储。
+        解析失败或条目非法时跳过该条目并告警，不影响 ``target_umo`` 兜底。
+        """
+        return parse_repo_routes(self._data.get("repo_routes"))
+
     def __init__(self, cfg: AstrBotConfig):
         """基于 AstrBotConfig 装载配置并输出启动日志."""
         super().__init__(cfg)
@@ -134,6 +145,7 @@ class PluginConfig(ConfigNode):
         logger.info(f"  bind_host: {self.bind_host}:{self.port}")
         logger.info(f"  webhook_path: {self.webhook_path}")
         logger.info(f"  target_umo: {self.target_umo}")
+        logger.info(f"  repo_routes: {len(self.repo_routes)} route(s)")
         logger.info(f"  enable_agent: {self.enable_agent}")
         logger.info(f"  llm_provider_id: {self.llm_provider_id or '(default)'}")
         logger.info(f"  agent_timeout: {self.agent_timeout}s")

@@ -79,6 +79,7 @@ def _make_plugin(context=None, **overrides):
         "bind_host": _LOOPBACK_HOST,
         "webhook_path": DEFAULT_WEBHOOK_PATH,
         "target_umo": "test:GroupMessage:1",
+        "repo_routes": "",
         "webhook_secret": "",
         "rate_limit": 0,
         "enable_agent": False,
@@ -288,6 +289,54 @@ async def test_known_events_are_routed(monkeypatch, event_type, handler_name):
 
 
 @pytest.mark.asyncio
+async def test_webhook_routes_message_by_repository(monkeypatch):
+    """repo_routes 命中时按仓库把消息分发到对应 UMO 列表."""
+
+    async def fake_handler(data, ctx):
+        return "formatted-message"
+
+    monkeypatch.setattr(plugin_module, "handle_push_event", fake_handler)
+    context = _FakeContext()
+    plugin = _make_plugin(
+        context,
+        repo_routes='{"owner/repo": ["umo:1", "umo:2"]}',
+        target_umo="fallback",
+    )
+    payload = {"repository": {"full_name": "owner/repo"}}
+
+    response = await plugin.handle_webhook(
+        _request("push", json.dumps(payload).encode("utf-8"))
+    )
+
+    assert response.status == 200
+    assert [umo for umo, _ in context.sent] == ["umo:1", "umo:2"]
+
+
+@pytest.mark.asyncio
+async def test_webhook_falls_back_for_unknown_repository(monkeypatch):
+    """仓库未命中任何路由时使用 target_umo 兜底."""
+
+    async def fake_handler(data, ctx):
+        return "formatted-message"
+
+    monkeypatch.setattr(plugin_module, "handle_push_event", fake_handler)
+    context = _FakeContext()
+    plugin = _make_plugin(
+        context,
+        repo_routes='{"owner/repo": ["umo:1"]}',
+        target_umo="fallback",
+    )
+    payload = {"repository": {"full_name": "other/repo"}}
+
+    response = await plugin.handle_webhook(
+        _request("push", json.dumps(payload).encode("utf-8"))
+    )
+
+    assert response.status == 200
+    assert [umo for umo, _ in context.sent] == ["fallback"]
+
+
+@pytest.mark.asyncio
 async def test_unknown_event_is_ignored():
     """未知事件只记日志，返回 200 且不发送消息."""
     context = _FakeContext()
@@ -338,8 +387,10 @@ async def test_agent_mode_delegates_to_llm_service(monkeypatch):
     """enable_agent 为真时交由 llm_service 改写并发送."""
     calls = []
 
-    async def fake_send_with_agent(plugin_instance, message, data, event_type):
-        calls.append((plugin_instance, message, data, event_type))
+    async def fake_send_with_agent(
+        plugin_instance, message, data, event_type, target_umos=None
+    ):
+        calls.append((plugin_instance, message, data, event_type, target_umos))
 
     async def fake_handler(data, ctx):
         return "template-message"
@@ -355,7 +406,9 @@ async def test_agent_mode_delegates_to_llm_service(monkeypatch):
     )
 
     assert response.status == 200
-    assert calls == [(plugin, "template-message", payload, "push")]
+    assert calls == [
+        (plugin, "template-message", payload, "push", ["test:GroupMessage:1"])
+    ]
     # 直接发送由 llm_service 负责，plugin 这里不应再发一次
     assert context.sent == []
 
@@ -386,6 +439,50 @@ async def test_send_message_skips_without_target_umo():
     await plugin.send_message("hello")
 
     assert context.sent == []
+
+
+@pytest.mark.asyncio
+async def test_send_message_fans_out_to_route_targets():
+    """路由解析出多个 UMO 时逐一发送同一消息."""
+    context = _FakeContext()
+    plugin = _make_plugin(context)
+
+    await plugin.send_message("hello", ["umo:1", "umo:2"])
+
+    assert [umo for umo, _ in context.sent] == ["umo:1", "umo:2"]
+    assert [
+        [component.text for component in chain.components] for _, chain in context.sent
+    ] == [["hello"], ["hello"]]
+
+
+@pytest.mark.asyncio
+async def test_send_message_skips_explicitly_muted_repo():
+    """repo_routes 命中空数组时不发送，也不回落到 target_umo."""
+    context = _FakeContext()
+    plugin = _make_plugin(context)
+
+    await plugin.send_message("hello", [])
+
+    assert context.sent == []
+
+
+@pytest.mark.asyncio
+async def test_send_to_one_target_failure_does_not_block_others(monkeypatch):
+    """单个目标发送失败时仍继续发送其它目标."""
+    context = _FakeContext()
+    plugin = _make_plugin(context)
+    original_send = context.send_message
+
+    async def flaky_send(umo, chain):
+        if umo == "umo:bad":
+            raise RuntimeError("platform down")
+        return await original_send(umo, chain)
+
+    monkeypatch.setattr(context, "send_message", flaky_send)
+
+    await plugin.send_message("hello", ["umo:bad", "umo:good"])
+
+    assert [umo for umo, _ in context.sent] == ["umo:good"]
 
 
 @pytest.mark.asyncio

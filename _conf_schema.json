@@ -22,7 +22,13 @@
     "type": "string",
     "default": "",
     "obvious_hint": true,
-    "hint": "接收 GitHub 事件消息的群组或用户 UMO（用户/群组唯一标识符）。在消息事件中可以通过 event.session_id 获取。所有 GitHub 事件都会发送到此目标。"
+    "hint": "接收 GitHub 事件消息的群组或用户 UMO（用户/群组唯一标识符）。在消息事件中可以通过 event.session_id 获取。所有 GitHub 事件默认发送到此目标；配置 repo_routes 后作为未命中仓库的兜底目标。"
+  },
+  "repo_routes": {
+    "description": "多仓库路由（Repo -> UMO）",
+    "type": "text",
+    "default": "",
+    "hint": "可选。JSON 对象，键为仓库全名（owner/repo，支持 owner/* 和 *），值为 UMO 字符串或字符串数组。匹配顺序：精确仓库 → owner/* → * → target_umo。空数组表示该仓库不发送消息。示例：{\"owner/repo_a\": [\"platform:GroupMessage:123\"], \"owner/*\": [\"platform:GroupMessage:456\"]}"
   },
   "webhook_secret": {
     "description": "Webhook Secret（可选）",

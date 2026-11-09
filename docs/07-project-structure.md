@@ -28,7 +28,8 @@ astrbot_plugin_gitpulse/
 │   │   └── verify_signature.py # Webhook 签名验证
 │   └── services/              # 业务服务层
 │       ├── __init__.py
-│       └── llm_service.py      # LLM 调用服务
+│       ├── llm_service.py      # LLM 调用服务
+│       └── repo_router.py      # 多仓库路由（Repo -> UMO）
 ├── main.py                     # 插件入口文件（AstrBot 加载点）
 ├── metadata.yaml               # 插件元数据
 ├── requirements.txt             # Python 依赖
@@ -90,6 +91,7 @@ src/formatters/ + src/utils/ (工具层)
 | **src/utils/rate_limiter.py** | 基于滑动窗口的请求限流器 |
 | **src/utils/verify_signature.py** | GitHub Webhook HMAC-SHA256 签名验证 |
 | **src/services/llm_service.py** | LLM 消息生成服务 |
+| **src/services/repo_router.py** | 解析 `repo_routes` 并解析仓库对应的目标 UMO 列表 |
 
 ## 数据流
 
@@ -105,6 +107,7 @@ src/handlers/*.py: handle_xxx_event()
 src/formatters/*.py: format_xxx_message()
     ↓
 src/core/plugin.py: send_message() 或 send_with_agent()
+    ↓ (repo_routes 解析：精确 → owner/* → * → target_umo)
     ↓ (如果启用 LLM: src/services/llm_service.py)
     ↓
 聊天平台 (QQ/微信等)

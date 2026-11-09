@@ -56,10 +56,12 @@ class _FakePlugin:
         cfg.update(cfg_overrides)
         self.cfg = SimpleNamespace(**cfg)
         self.sent = []
+        self.targets = []
 
-    async def send_message(self, message):
-        """记录最终发送的文本."""
+    async def send_message(self, message, target_umos=None):
+        """记录最终发送的文本与目标会话列表."""
         self.sent.append(message)
+        self.targets.append(target_umos)
 
 
 def _response(text):
@@ -139,6 +141,20 @@ async def test_llm_exception_falls_back_to_template():
     await send_with_agent(plugin, "template", {}, "issues")
 
     assert plugin.sent == ["template"]
+
+
+@pytest.mark.asyncio
+async def test_target_umos_forwarded_on_fallback():
+    """LLM 降级发送时仍使用仓库路由得到的目标列表，而不是回落到单目标."""
+    context = _FakeContext(generate_error=RuntimeError("llm down"))
+    plugin = _FakePlugin(context)
+
+    await send_with_agent(
+        plugin, "template", {}, "push", ["umo:group-a", "umo:group-b"]
+    )
+
+    assert plugin.sent == ["template"]
+    assert plugin.targets == [["umo:group-a", "umo:group-b"]]
 
 
 _TEMPLATE_WITH_URL = "✅ PR 已合并\n📎 https://github.com/owner/repo/pull/7"

@@ -15,6 +15,7 @@ GitPulse 是一个 AstrBot 插件，用于接收 GitHub 事件（push、issues�
 - ✅ 实时转发到指定的聊天平台群组/用户
 - ✅ 自定义端口号配置
 - ✅ 自定义 Webhook 路径（便于与 AstrBot 共用域名和反向代理）
+- ✅ 多仓库路由与多群分发（Repo -> UMO 映射，支持通配与静音）
 - ✅ 简洁的消息格式，包含关键信息
 - ✅ Webhook Secret 签名验证（防止恶意请求）
 - ✅ 请求速率限制（防止消息轰炸）
@@ -46,6 +47,7 @@ pip install -r requirements.txt
   "bind_host": "0.0.0.0",
   "webhook_path": "/webhook",
   "target_umo": "platform_id:GroupMessage:群号",
+  "repo_routes": "",
   "webhook_secret": "your_github_webhook_secret",
   "rate_limit": 10,
   "enable_agent": true,
