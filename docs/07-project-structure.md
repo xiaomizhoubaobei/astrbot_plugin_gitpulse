@@ -111,16 +111,19 @@ GitHub Webhook
 main.py: PluginEntry.handle_webhook()
     ↓
 src/core/plugin.py: GitHubWebhookPlugin.handle_webhook()
-    ↓ (限流检查、签名验证)
-src/handlers/*.py: handle_xxx_event()
-    ↓
-src/formatters/*.py: format_xxx_message()
-    ↓
-src/core/plugin.py: send_message() 或 send_with_agent()
-    ↓ (repo_routes 解析：精确 → owner/* → * → target_umo)
-    ↓ (如果启用 LLM: src/services/llm_service.py)
-    ↓
-聊天平台 (QQ/微信等)
+    ↓ (限流检查、签名验证、事件白名单)
+    ├─→ 立即返回 HTTP 200（避免 GitHub 10 秒超时重试）
+    └─→ asyncio.create_task 后台处理
+            ↓
+        src/handlers/*.py: handle_xxx_event()
+            ↓
+        src/formatters/*.py: format_xxx_message()
+            ↓
+        src/core/plugin.py: send_message() 或 send_with_agent()
+            ↓ (repo_routes 解析：精确 → owner/* → * → target_umo)
+            ↓ (如果启用 LLM: src/services/llm_service.py)
+            ↓
+        聊天平台 (QQ/微信等)
 ```
 
 ## 导入规范

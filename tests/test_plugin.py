@@ -1,5 +1,6 @@
 """Tests for the core webhook plugin."""
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -279,6 +280,7 @@ async def test_known_events_are_routed(monkeypatch, event_type, handler_name):
     request = _request(event_type, json.dumps(payload).encode("utf-8"))
 
     response = await plugin.handle_webhook(request)
+    await plugin.wait_for_background_tasks()
 
     assert response.status == 200
     assert response.text == "OK"
@@ -287,6 +289,59 @@ async def test_known_events_are_routed(monkeypatch, event_type, handler_name):
     umo, chain = context.sent[0]
     assert umo == "test:GroupMessage:1"
     assert [component.text for component in chain.components] == ["formatted-message"]
+
+
+@pytest.mark.asyncio
+async def test_webhook_returns_before_background_processing_finishes(monkeypatch):
+    """handler 尚未完成时 webhook 已返回 200，证明处理与响应已解耦."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_handler(data, ctx):
+        started.set()
+        await release.wait()
+        return "slow-message"
+
+    monkeypatch.setattr(plugin_module, "handle_push_event", slow_handler)
+    context = _FakeContext()
+    plugin = _make_plugin(context)
+
+    response = await plugin.handle_webhook(_request("push"))
+    await started.wait()
+
+    # 后台任务已启动但被阻塞，响应此时已经返回且尚未发送消息
+    assert response.status == 200
+    assert context.sent == []
+
+    release.set()
+    await plugin.wait_for_background_tasks()
+
+    assert len(context.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_terminate_cancels_background_tasks(monkeypatch):
+    """插件卸载时取消仍在执行的后台事件处理任务."""
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def hung_handler(data, ctx):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr(plugin_module, "handle_push_event", hung_handler)
+    plugin = _make_plugin()
+
+    await plugin.handle_webhook(_request("push"))
+    await started.wait()
+    await plugin.terminate()
+
+    assert cancelled.is_set()
+    assert plugin._background_tasks == set()
 
 
 @pytest.mark.asyncio
@@ -308,6 +363,7 @@ async def test_webhook_routes_message_by_repository(monkeypatch):
     response = await plugin.handle_webhook(
         _request("push", json.dumps(payload).encode("utf-8"))
     )
+    await plugin.wait_for_background_tasks()
 
     assert response.status == 200
     assert [umo for umo, _ in context.sent] == ["umo:1", "umo:2"]
@@ -332,6 +388,7 @@ async def test_webhook_falls_back_for_unknown_repository(monkeypatch):
     response = await plugin.handle_webhook(
         _request("push", json.dumps(payload).encode("utf-8"))
     )
+    await plugin.wait_for_background_tasks()
 
     assert response.status == 200
     assert [umo for umo, _ in context.sent] == ["fallback"]
@@ -363,6 +420,7 @@ async def test_new_events_are_routed(monkeypatch, event_type, handler_name):
     request = _request(event_type, json.dumps(payload).encode("utf-8"))
 
     response = await plugin.handle_webhook(request)
+    await plugin.wait_for_background_tasks()
 
     assert response.status == 200
     assert calls == [(payload, context)]
@@ -426,25 +484,29 @@ async def test_handler_returning_none_sends_nothing(monkeypatch):
     plugin = _make_plugin(context)
 
     response = await plugin.handle_webhook(_request("push"))
+    await plugin.wait_for_background_tasks()
 
     assert response.status == 200
     assert context.sent == []
 
 
 @pytest.mark.asyncio
-async def test_handler_exception_returns_500(monkeypatch):
-    """handler 抛未捕获异常时返回 500，避免把异常泄漏给调用方."""
+async def test_handler_exception_does_not_fail_webhook(monkeypatch):
+    """后台 handler 抛异常时只记日志，webhook 已先行返回 200 且不发送消息."""
 
     async def fake_handler(data, ctx):
         raise RuntimeError("handler boom")
 
     monkeypatch.setattr(plugin_module, "handle_push_event", fake_handler)
-    plugin = _make_plugin()
+    context = _FakeContext()
+    plugin = _make_plugin(context)
 
     response = await plugin.handle_webhook(_request("push"))
+    await plugin.wait_for_background_tasks()
 
-    assert response.status == 500
-    assert response.text == "Internal server error"
+    assert response.status == 200
+    assert response.text == "OK"
+    assert context.sent == []
 
 
 @pytest.mark.asyncio
@@ -469,6 +531,7 @@ async def test_agent_mode_delegates_to_llm_service(monkeypatch):
     response = await plugin.handle_webhook(
         _request("push", json.dumps(payload).encode("utf-8"))
     )
+    await plugin.wait_for_background_tasks()
 
     assert response.status == 200
     assert calls == [
@@ -490,6 +553,7 @@ async def test_send_failure_does_not_break_webhook(monkeypatch):
     plugin = _make_plugin(context)
 
     response = await plugin.handle_webhook(_request("push"))
+    await plugin.wait_for_background_tasks()
 
     assert response.status == 200
     assert response.text == "OK"

@@ -1,5 +1,6 @@
 """GitPulse plugin core implementation."""
 
+import asyncio
 import json
 
 from aiohttp import web
@@ -44,6 +45,8 @@ class GitHubWebhookPlugin(Star):
         self.app.router.add_post(self.cfg.webhook_path, self.handle_webhook)
         self.runner: web.AppRunner | None = None
         self.site: web.TCPSite | None = None
+        # 后台事件处理任务：先回 200 再格式化/调 LLM/发送，避免 GitHub 10 秒超时重试。
+        self._background_tasks: set[asyncio.Task] = set()
 
         # rate_limit <= 0 表示不启用限流，此时显式置空以便下游判空
         self.rate_limiter: RateLimiter | None = None
@@ -137,28 +140,36 @@ class GitHubWebhookPlugin(Star):
             )
             return web.Response(status=200, text="OK")
 
-        message = None
+        # 验签与白名单校验通过后立即回包；格式化、LLM 改写与发送转入后台，
+        # 避免 GitHub 因处理耗时超过 10 秒而判定失败并重复推送。
+        self._schedule_event_processing(event_type, data)
+        return web.Response(status=200, text="OK")
 
+    def _schedule_event_processing(self, event_type: str, data: dict):
+        """把事件处理投递到后台任务，不阻塞 webhook 响应."""
+        task = asyncio.create_task(self._process_event(event_type, data))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._on_background_task_done)
+
+    def _on_background_task_done(self, task: asyncio.Task):
+        """回收已结束的后台任务，并记录逃逸的异常."""
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                f"GitHub Webhook: Background event processing failed: {exc}",
+                exc_info=exc,
+            )
+
+    async def _process_event(self, event_type: str, data: dict):
+        """在后台完成事件格式化、LLM 改写与消息发送；异常只记日志."""
         try:
-            if event_type == EVENT_TYPE_PUSH:
-                message = await handle_push_event(data, self.context)
-            elif event_type == EVENT_TYPE_ISSUES:
-                message = await handle_issues_event(data, self.context)
-            elif event_type == EVENT_TYPE_PULL_REQUEST:
-                message = await handle_pull_request_event(data, self.context)
-            elif event_type == EVENT_TYPE_RELEASE:
-                message = await handle_release_event(data, self.context)
-            elif event_type == EVENT_TYPE_WORKFLOW_RUN:
-                message = await handle_workflow_run_event(data, self.context)
-            elif event_type in (EVENT_TYPE_STAR, EVENT_TYPE_WATCH):
-                message = await handle_star_event(data, self.context)
-            elif event_type == EVENT_TYPE_ISSUE_COMMENT:
-                message = await handle_issue_comment_event(data, self.context)
-        except Exception as e:
-            logger.error(f"GitHub Webhook: Error processing event: {e}", exc_info=True)
-            return web.Response(status=500, text="Internal server error")
+            message = await self._format_event(event_type, data)
+            if not message:
+                return
 
-        if message:
             target_umos = resolve_target_umos(
                 get_repo_full_name(data), self.cfg.repo_routes, self.cfg.target_umo
             )
@@ -168,8 +179,42 @@ class GitHubWebhookPlugin(Star):
                 await send_with_agent(self, message, data, event_type, target_umos)
             else:
                 await self.send_message(message, target_umos)
+        except Exception as e:
+            logger.error(f"GitHub Webhook: Error processing event: {e}", exc_info=True)
 
-        return web.Response(status=200, text="OK")
+    async def _format_event(self, event_type: str, data: dict) -> str | None:
+        """按事件类型调用对应 handler 生成模板消息."""
+        if event_type == EVENT_TYPE_PUSH:
+            return await handle_push_event(data, self.context)
+        if event_type == EVENT_TYPE_ISSUES:
+            return await handle_issues_event(data, self.context)
+        if event_type == EVENT_TYPE_PULL_REQUEST:
+            return await handle_pull_request_event(data, self.context)
+        if event_type == EVENT_TYPE_RELEASE:
+            return await handle_release_event(data, self.context)
+        if event_type == EVENT_TYPE_WORKFLOW_RUN:
+            return await handle_workflow_run_event(data, self.context)
+        if event_type in (EVENT_TYPE_STAR, EVENT_TYPE_WATCH):
+            return await handle_star_event(data, self.context)
+        if event_type == EVENT_TYPE_ISSUE_COMMENT:
+            return await handle_issue_comment_event(data, self.context)
+        return None
+
+    async def wait_for_background_tasks(self):
+        """等待当前所有后台事件处理任务结束（测试与优雅退出使用）."""
+        tasks = list(self._background_tasks)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _cancel_background_tasks(self):
+        """取消尚未完成的后台任务，避免插件卸载后仍有协程在跑."""
+        tasks = list(self._background_tasks)
+        if not tasks:
+            return
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info(f"GitHub Webhook: Cancelled {len(tasks)} background task(s)")
 
     async def send_message(self, message: str, target_umos: list[str] | None = None):
         """按仓库路由得到的 UMO 列表分发消息；未指定时回落到 target_umo."""
@@ -209,8 +254,9 @@ class GitHubWebhookPlugin(Star):
             logger.error(f"GitHub Webhook: Error details: {str(e)}")
 
     async def terminate(self):
-        """插件卸载时释放 HTTP 服务与运行器资源."""
+        """插件卸载时释放 HTTP 服务、后台任务与运行器资源."""
         logger.info("GitHub Webhook: Shutting down server...")
+        await self._cancel_background_tasks()
         if self.site:
             await self.site.stop()
             logger.info("GitHub Webhook: Server stopped")

@@ -63,8 +63,8 @@ main.py: PluginEntry（@register 注册的 AstrBot 入口）
 2. 读取并解析 JSON；
 3. 验签：只要配置了 `webhook_secret` 就必须携带 `X-Hub-Signature-256`——缺少签名头与签名不匹配均返回 401；仅在未配置 `webhook_secret` 时跳过校验；
 4. `X-GitHub-Event` 分发：`ping` 直接回 `Pong`（不受白名单影响）；`SUPPORTED_EVENT_TYPES` 内的事件先过 `enabled_events` 白名单，再交给对应 handler；未支持或未启用的事件只记日志并回 200；
-5. handler 返回消息字符串或 `None`（`None` 表示不发消息）；
-6. `enable_agent` 为真时走 LLM（失败/超时自动回落到模板消息），否则直接发送。
+5. 支持且启用的事件在验签与白名单通过后**立即返回 200**，并通过 `asyncio.create_task` 把后续处理转入后台，避免 LLM 处理超过 GitHub 的 10 秒响应超时而触发重复推送；插件卸载时 `terminate` 会取消未完成的后台任务；
+6. 后台任务依次调用 handler、解析 `repo_routes`、按 `enable_agent` 走 LLM 或直接发送；处理异常只记日志，不影响已返回的响应。
 
 分层职责：
 
