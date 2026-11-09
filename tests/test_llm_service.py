@@ -139,3 +139,83 @@ async def test_llm_exception_falls_back_to_template():
     await send_with_agent(plugin, "template", {}, "issues")
 
     assert plugin.sent == ["template"]
+
+
+_TEMPLATE_WITH_URL = "✅ PR 已合并\n📎 https://github.com/owner/repo/pull/7"
+
+
+@pytest.mark.asyncio
+async def test_all_urls_preserved_uses_generated_message():
+    """LLM 输出保留全部核心链接时，使用润色后的消息."""
+    context = _FakeContext(
+        response=_response("🎉 PR 已合并 https://github.com/owner/repo/pull/7")
+    )
+    plugin = _FakePlugin(context)
+
+    await send_with_agent(plugin, _TEMPLATE_WITH_URL, {}, "pull_request")
+
+    assert plugin.sent == ["🎉 PR 已合并 https://github.com/owner/repo/pull/7"]
+
+
+@pytest.mark.asyncio
+async def test_missing_url_falls_back_to_template():
+    """LLM 输出丢失核心链接时，回退到模板消息，保证信息不失真."""
+    context = _FakeContext(response=_response("🎉 PR 已合并，快去看看"))
+    plugin = _FakePlugin(context)
+
+    await send_with_agent(plugin, _TEMPLATE_WITH_URL, {}, "pull_request")
+
+    assert plugin.sent == [_TEMPLATE_WITH_URL]
+
+
+@pytest.mark.asyncio
+async def test_partial_url_loss_falls_back_to_template():
+    """模板含多个链接时，只要丢失任意一个就回退."""
+    template = (
+        "🔀 2 commits\n"
+        "📎 https://github.com/owner/repo/commit/abc\n"
+        "🌿 https://github.com/owner/repo/tree/main"
+    )
+    context = _FakeContext(
+        response=_response("推送了 2 个提交 https://github.com/owner/repo/commit/abc")
+    )
+    plugin = _FakePlugin(context)
+
+    await send_with_agent(plugin, template, {}, "push")
+
+    assert plugin.sent == [template]
+
+
+@pytest.mark.asyncio
+async def test_markdown_wrapped_url_counts_as_preserved():
+    """LLM 用 Markdown 包裹链接时，提取结果应忽略尾随括号与标点."""
+    context = _FakeContext(
+        response=_response("🎉 [PR](https://github.com/owner/repo/pull/7) 已合并")
+    )
+    plugin = _FakePlugin(context)
+
+    await send_with_agent(plugin, _TEMPLATE_WITH_URL, {}, "pull_request")
+
+    assert plugin.sent == ["🎉 [PR](https://github.com/owner/repo/pull/7) 已合并"]
+
+
+@pytest.mark.asyncio
+async def test_short_truncated_output_falls_back_to_template():
+    """极短截断输出通常会丢失链接，应触发模板兜底."""
+    context = _FakeContext(response=_response("完成"))
+    plugin = _FakePlugin(context)
+
+    await send_with_agent(plugin, _TEMPLATE_WITH_URL, {}, "pull_request")
+
+    assert plugin.sent == [_TEMPLATE_WITH_URL]
+
+
+@pytest.mark.asyncio
+async def test_template_without_url_accepts_generated_message():
+    """模板本身无链接时不做 URL 比对，正常使用生成结果."""
+    context = _FakeContext(response=_response("简短回复"))
+    plugin = _FakePlugin(context)
+
+    await send_with_agent(plugin, "plain template", {}, "ping")
+
+    assert plugin.sent == ["简短回复"]

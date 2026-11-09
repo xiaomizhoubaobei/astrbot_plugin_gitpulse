@@ -1,8 +1,23 @@
 """LLM service for message generation."""
 
 import asyncio
+import re
 
 from astrbot.api import logger
+
+# 匹配 http(s) 链接；排除空白与常见包裹符号，交给 rstrip 统一去掉尾随标点。
+_URL_PATTERN = re.compile(r"https?://[^\s\"'<>]+")
+_URL_TRAILING_CHARS = ".,;:!?)]}。，；：！？"
+
+
+def _extract_urls(text: str) -> set[str]:
+    """提取文本中的 http(s) 链接，并去掉 Markdown/标点包裹产生的尾随字符."""
+    return {url.rstrip(_URL_TRAILING_CHARS) for url in _URL_PATTERN.findall(text)}
+
+
+def _missing_urls(original: str, generated: str) -> set[str]:
+    """返回原始消息中存在、但生成消息中缺失的核心链接."""
+    return _extract_urls(original) - _extract_urls(generated)
 
 
 async def send_with_agent(plugin_instance, message: str, data: dict, event_type: str):
@@ -97,11 +112,23 @@ async def send_with_agent(plugin_instance, message: str, data: dict, event_type:
                 )
 
                 if text_content:
-                    generated_message = text_content
-                    logger.info(
-                        f"GitHub Webhook: Generated message: {generated_message[:100]}..."
-                    )
-                    await plugin_instance.send_message(generated_message)
+                    # 核心链接保护：LLM 可能幻觉/截断导致 URL 丢失，
+                    # 只要原始模板中的链接没有全部保留，就回退到模板消息。
+                    missing_urls = _missing_urls(message, text_content)
+                    if missing_urls:
+                        logger.warning(
+                            f"GitHub Webhook: LLM output dropped "
+                            f"{len(missing_urls)} URL(s): "
+                            f"{', '.join(sorted(missing_urls))}; "
+                            f"falling back to template"
+                        )
+                        await plugin_instance.send_message(message)
+                    else:
+                        generated_message = text_content
+                        logger.info(
+                            f"GitHub Webhook: Generated message: {generated_message[:100]}..."
+                        )
+                        await plugin_instance.send_message(generated_message)
                 else:
                     logger.warning(
                         "GitHub Webhook: LLM returned empty content, falling back to template"

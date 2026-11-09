@@ -77,7 +77,7 @@ GitHub Webhook 密钥，用于验证请求来源。
 - 启用后，LLM 会根据 GitHub 事件内容生成简洁、有趣的消息
 - 需要在 AstrBot 中已配置 LLM Provider
 - 如果禁用，则使用默认模板格式
-- LLM 调用失败时会自动降级到默认模板
+- LLM 调用失败、输出为空、超时，或输出丢失模板中的核心链接时，会自动降级到默认模板
 
 ### llm_provider_id
 

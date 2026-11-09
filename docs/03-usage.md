@@ -154,6 +154,8 @@ GitHub 在配置 Webhook 时会自动发送 Ping 事件，插件会自动响应�
 3. （可选）配置 `agent_system_prompt` 自定义消息风格
 4. （可选）配置 `llm_provider_id` 指定使用的模型
 
+> LLM 输出会校验模板中的核心链接（commit / issue / PR URL 等）：只要丢失任意一个，就自动回退到模板消息，避免群通知信息失真。
+
 查看 [配置文档](02-configuration.md) 了解 LLM 相关配置详情。
 
 ### 使用 Prompt 示例

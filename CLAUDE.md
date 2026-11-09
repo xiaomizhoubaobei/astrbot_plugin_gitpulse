@@ -83,7 +83,7 @@ main.py: PluginEntry（@register 注册的 AstrBot 入口）
 - **动作常量必须与 GitHub 真实枚举一致**：PR 同步动作是 `synchronize`（无尾字母 d，见 `ACTION_PR_SYNCHRONIZE`），formatter 的 emoji 映射键一律引用 `src/core/constants.py`，不要写回硬编码字符串，否则会再次出现「🔀 永不命中」。
 - **配置缺失兜底**：宿主 `AstrBotConfig` 对缺失键返回 `None`，`ConfigNode` 按字段类型注解给出零值兜底；`bind_host` 是 property（缺省回落 `DEFAULT_BIND_HOST`），不要改成普通字段。
 - **默认监听 `0.0.0.0`** 是有意为之（GitHub 需从外部访问），`src/core/constants.py` 中带 `# nosec B104`；暴露面用 `bind_host` 配置收敛。
-- **LLM 是可选增强**：任何 LLM 异常、空输出、超时都必须回落到模板消息，不能让 webhook 请求失败。
+- **LLM 是可选增强**：任何 LLM 异常、空输出、超时，或输出丢失模板中的核心链接，都必须回落到模板消息，不能让 webhook 请求失败。
 - **测试约定**：测试用 `from src.xxx import ...`；formatter/常量这类纯逻辑直接单测，新增动作映射时同步补参数化用例。
 
 ## 扩展方式
