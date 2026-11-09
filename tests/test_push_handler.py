@@ -86,6 +86,29 @@ async def test_push_event_strips_refs_heads_prefix():
 
 
 @pytest.mark.asyncio
+async def test_branch_creation_push_renders_branch_name():
+    """创建分支的 push（带 commits）应正常渲染分支名."""
+    message = await handle_push_event(
+        _make_payload(ref="refs/heads/feature/new"), context=None
+    )
+
+    assert message is not None
+    assert "Branch: feature/new" in message
+    assert "feat: 新增功能" in message
+
+
+@pytest.mark.asyncio
+async def test_tag_creation_push_renders_tag_ref():
+    """创建标签的 push（带 commits）应保留完整 ref."""
+    message = await handle_push_event(
+        _make_payload(ref="refs/tags/v1.0.0"), context=None
+    )
+
+    assert message is not None
+    assert "Branch: refs/tags/v1.0.0" in message
+
+
+@pytest.mark.asyncio
 async def test_push_event_without_commits_returns_none():
     """没有提交（如删除分支）时不发送消息。"""
     assert await handle_push_event(_make_payload(commits=[]), context=None) is None

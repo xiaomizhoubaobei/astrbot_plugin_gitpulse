@@ -56,6 +56,19 @@ async def test_pull_request_event_preserves_action():
 
 
 @pytest.mark.asyncio
+async def test_merged_pull_request_renders_as_closed():
+    """GitHub 合并事件是 action=closed + merged=true，应渲染为 ✅ 已关闭."""
+    payload = _make_payload(action="closed")
+    payload["pull_request"]["merged"] = True
+
+    message = await handle_pull_request_event(payload, context=None)
+
+    assert message is not None
+    assert "✅ GitHub Pull Request Event" in message
+    assert "alice closed PR in owner/repo" in message
+
+
+@pytest.mark.asyncio
 async def test_pull_request_event_uses_defaults_for_missing_fields():
     """字段缺失时应使用兜底值，而不是抛异常。"""
     message = await handle_pull_request_event({}, context=None)
