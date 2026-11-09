@@ -49,7 +49,7 @@ repos:
     # 与 mypy 口径一致：ai-audit/ 下的 .py 为框架侧说明性模块，不纳入本仓库门禁。
     exclude: '^ai-audit/'
 - repo: https://github.com/gitleaks/gitleaks
-  rev: v8.30.1
+  rev: v8.30.0
   hooks:
   - id: gitleaks
 # 安全与脚本检查：与 StepSecurity 建议对齐（PR #14）。
@@ -57,11 +57,11 @@ repos:
 # 后者是 language: script，要求宿主机预装 shellcheck，在 pre-commit.ci 的 runner
 # 镜像里没有该命令，会直接以「This check needs shellcheck」失败。
 - repo: https://github.com/shellcheck-py/shellcheck-py
-  rev: v0.11.0.1
+  rev: v0.11.0.1-1
   hooks:
   - id: shellcheck
 - repo: https://github.com/pylint-dev/pylint
-  rev: v4.0.6
+  rev: v4.1.3
   hooks:
   - id: pylint
     # 只做「真错误」守卫（E 级），不引入风格/设计类存量告警：
