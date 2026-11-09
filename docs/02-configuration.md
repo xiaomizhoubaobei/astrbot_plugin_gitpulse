@@ -94,6 +94,41 @@ Webhook 服务器绑定的网卡地址。
 - 命中多个目标时逐一分发；单个目标发送失败不影响其它目标
 - 单条配置非法（键格式错误、值不是字符串/字符串数组）时跳过该条并记录告警，其它条目照常生效
 
+### enabled_events
+
+**类型**: `text` | **默认值**: `""`（启用全部支持的事件）
+
+事件订阅白名单，用于只接收关注的事件类型，避免消息轰炸。
+
+**支持的事件**：
+
+| 事件 | 说明 |
+| --- | --- |
+| `push` | 代码推送 |
+| `issues` | Issue 打开/关闭/重开等 |
+| `pull_request` | PR 打开/关闭/重开/同步等 |
+| `release` | 新版本发布、预发布、编辑、删除等 |
+| `workflow_run` | CI/CD 工作流完成（仅转发 `completed`，忽略 `requested`/`in_progress`） |
+| `star` / `watch` | 仓库新增/取消 Star（新版 `star` 与旧版 `watch` 事件均支持） |
+| `issue_comment` | Issue / PR 评论创建、编辑、删除 |
+
+**格式**：逗号分隔字符串或 JSON 数组。
+
+```text
+push,issues,pull_request,release
+```
+
+```json
+["push", "issues", "pull_request", "release"]
+```
+
+**约定**：
+
+- 留空表示启用全部支持的事件（与旧版本兼容）
+- `ping` 是 GitHub 配置 Webhook 时的健康检查，始终返回 `Pong`，不受白名单影响
+- 配置非法（如 JSON 写错）时禁用全部可订阅事件并告警，避免拼写错误被当成「未配置」而意外放开全部事件
+- 未在白名单中的事件仍返回 HTTP 200（GitHub 不会重试），只是不发送消息
+
 ### webhook_secret
 
 **类型**: `string` | **默认值**: `""` (可选)

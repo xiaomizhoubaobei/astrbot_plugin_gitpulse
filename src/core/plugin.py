@@ -8,13 +8,29 @@ from astrbot.api import logger
 from astrbot.api.message_components import Plain
 from astrbot.api.star import Context, Star
 
+from ..handlers.issue_comment_handler import handle_issue_comment_event
 from ..handlers.issues_handler import handle_issues_event
 from ..handlers.pull_request_handler import handle_pull_request_event
 from ..handlers.push_handler import handle_push_event
+from ..handlers.release_handler import handle_release_event
+from ..handlers.star_handler import handle_star_event
+from ..handlers.workflow_run_handler import handle_workflow_run_event
 from ..services.repo_router import get_repo_full_name, resolve_target_umos
 from ..utils.rate_limiter import RateLimiter
 from ..utils.verify_signature import verify_signature
 from .config import PluginConfig
+from .constants import (
+    EVENT_TYPE_ISSUE_COMMENT,
+    EVENT_TYPE_ISSUES,
+    EVENT_TYPE_PING,
+    EVENT_TYPE_PULL_REQUEST,
+    EVENT_TYPE_PUSH,
+    EVENT_TYPE_RELEASE,
+    EVENT_TYPE_STAR,
+    EVENT_TYPE_WATCH,
+    EVENT_TYPE_WORKFLOW_RUN,
+    SUPPORTED_EVENT_TYPES,
+)
 
 
 class GitHubWebhookPlugin(Star):
@@ -106,20 +122,38 @@ class GitHubWebhookPlugin(Star):
 
         logger.info(f"GitHub Webhook: Received event type: {event_type}")
 
-        if event_type == "ping":
+        if event_type == EVENT_TYPE_PING:
             return web.Response(text="Pong")
+
+        if event_type not in SUPPORTED_EVENT_TYPES:
+            logger.info(f"GitHub Webhook: Event type '{event_type}' not handled")
+            return web.Response(status=200, text="OK")
+
+        # 订阅白名单：未配置时启用全部支持的事件；ping 不受白名单影响。
+        if not self.cfg.is_event_enabled(event_type):
+            logger.info(
+                f"GitHub Webhook: Event type '{event_type}' disabled by "
+                f"enabled_events, ignoring"
+            )
+            return web.Response(status=200, text="OK")
 
         message = None
 
         try:
-            if event_type == "push":
+            if event_type == EVENT_TYPE_PUSH:
                 message = await handle_push_event(data, self.context)
-            elif event_type == "issues":
+            elif event_type == EVENT_TYPE_ISSUES:
                 message = await handle_issues_event(data, self.context)
-            elif event_type == "pull_request":
+            elif event_type == EVENT_TYPE_PULL_REQUEST:
                 message = await handle_pull_request_event(data, self.context)
-            else:
-                logger.info(f"GitHub Webhook: Event type '{event_type}' not handled")
+            elif event_type == EVENT_TYPE_RELEASE:
+                message = await handle_release_event(data, self.context)
+            elif event_type == EVENT_TYPE_WORKFLOW_RUN:
+                message = await handle_workflow_run_event(data, self.context)
+            elif event_type in (EVENT_TYPE_STAR, EVENT_TYPE_WATCH):
+                message = await handle_star_event(data, self.context)
+            elif event_type == EVENT_TYPE_ISSUE_COMMENT:
+                message = await handle_issue_comment_event(data, self.context)
         except Exception as e:
             logger.error(f"GitHub Webhook: Error processing event: {e}", exc_info=True)
             return web.Response(status=500, text="Internal server error")

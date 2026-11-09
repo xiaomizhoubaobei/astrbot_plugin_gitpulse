@@ -135,6 +135,85 @@ TatsukiMengChen 在 owner/repo 提交了 PR
 📎 https://github.com/owner/repo/pull/10
 ```
 
+## Release 事件
+
+**默认模板**：
+```
+🚀 GitHub Release Event
+👤 username published release in owner/repo
+🏷️ v1.2.3: Big Release
+📎 https://github.com/owner/repo/releases/tag/v1.2.3
+```
+
+预发布使用 🧪，删除使用 🗑️，取消发布使用 🚫；未知动作回落到 📦。
+
+## Workflow Run 事件
+
+只转发 `completed` 状态，`requested` / `in_progress` 会被忽略，避免刷屏。
+
+**成功**：
+```
+✅ GitHub Workflow Run Event
+👤 username completed workflow in owner/repo
+⚙️ CI · push · main
+📊 Result: success
+📎 https://github.com/owner/repo/actions/runs/123456
+```
+
+**失败**：
+```
+❌ GitHub Workflow Run Event
+👤 username completed workflow in owner/repo
+⚙️ CI · push · main
+📊 Result: failure
+📎 https://github.com/owner/repo/actions/runs/123456
+```
+
+其它结论：`cancelled` ⚪、`skipped` ⏭️、`timed_out` ⏰、`action_required` ⚠️、
+`neutral` ➖、`stale` 🧹、`startup_failure` 💥。
+
+## Star 事件
+
+同时支持新版 `star` 事件与旧版 `watch` 事件。
+
+**新增 Star**：
+```
+⭐ GitHub Star Event
+👤 username starred owner/repo
+⭐ Stars: 128
+📎 https://github.com/owner/repo
+```
+
+**取消 Star**（`star` 事件的 `deleted` 动作）：
+```
+💔 GitHub Star Event
+👤 username unstarred owner/repo
+⭐ Stars: 127
+📎 https://github.com/owner/repo
+```
+
+## Issue Comment 事件
+
+Issue 与 PR 评论共用 `issue_comment` 事件；评论正文取首行并截断到 100 字符。
+
+**Issue 评论**：
+```
+💬 GitHub Issue Comment Event
+👤 username commented on issue in owner/repo
+📋 Issue #42: Bug report
+💭 Looks good to me
+📎 https://github.com/owner/repo/issues/42#issuecomment-123456
+```
+
+**PR 评论**：
+```
+💬 GitHub Issue Comment Event
+👤 username commented on pr in owner/repo
+📋 PR #10: Add new feature
+💭 LGTM
+📎 https://github.com/owner/repo/pull/10#issuecomment-123456
+```
+
 ## Ping 事件
 
 GitHub 在配置 Webhook 时会自动发送 Ping 事件，插件会自动响应：

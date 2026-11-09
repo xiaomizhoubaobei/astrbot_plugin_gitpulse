@@ -80,6 +80,7 @@ def _make_plugin(context=None, **overrides):
         "webhook_path": DEFAULT_WEBHOOK_PATH,
         "target_umo": "test:GroupMessage:1",
         "repo_routes": "",
+        "enabled_events": "",
         "webhook_secret": "",
         "rate_limit": 0,
         "enable_agent": False,
@@ -337,12 +338,76 @@ async def test_webhook_falls_back_for_unknown_repository(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "handler_name"),
+    [
+        ("release", "handle_release_event"),
+        ("workflow_run", "handle_workflow_run_event"),
+        ("star", "handle_star_event"),
+        ("watch", "handle_star_event"),
+        ("issue_comment", "handle_issue_comment_event"),
+    ],
+)
+async def test_new_events_are_routed(monkeypatch, event_type, handler_name):
+    """release / workflow_run / star / watch / issue_comment 应交给对应 handler."""
+    context = _FakeContext()
+    plugin = _make_plugin(context)
+    calls = []
+
+    async def fake_handler(data, ctx):
+        calls.append((data, ctx))
+        return "formatted-message"
+
+    monkeypatch.setattr(plugin_module, handler_name, fake_handler)
+    payload = {"action": "created"}
+    request = _request(event_type, json.dumps(payload).encode("utf-8"))
+
+    response = await plugin.handle_webhook(request)
+
+    assert response.status == 200
+    assert calls == [(payload, context)]
+    assert len(context.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_disabled_event_is_ignored(monkeypatch):
+    """enabled_events 未包含的事件不进入 handler，也不发送消息."""
+    calls = []
+
+    async def fake_handler(data, ctx):
+        calls.append(data)
+        return "should-not-send"
+
+    monkeypatch.setattr(plugin_module, "handle_issues_event", fake_handler)
+    context = _FakeContext()
+    plugin = _make_plugin(context, enabled_events="push,release")
+
+    response = await plugin.handle_webhook(_request("issues", b"{}"))
+
+    assert response.status == 200
+    assert response.text == "OK"
+    assert calls == []
+    assert context.sent == []
+
+
+@pytest.mark.asyncio
+async def test_ping_is_not_affected_by_event_whitelist():
+    """ping 只做健康检查，不受 enabled_events 白名单影响."""
+    plugin = _make_plugin(enabled_events="push")
+
+    response = await plugin.handle_webhook(_request("ping"))
+
+    assert response.status == 200
+    assert response.text == "Pong"
+
+
+@pytest.mark.asyncio
 async def test_unknown_event_is_ignored():
     """未知事件只记日志，返回 200 且不发送消息."""
     context = _FakeContext()
     plugin = _make_plugin(context)
 
-    response = await plugin.handle_webhook(_request("star", b"{}"))
+    response = await plugin.handle_webhook(_request("deployment", b"{}"))
 
     assert response.status == 200
     assert response.text == "OK"

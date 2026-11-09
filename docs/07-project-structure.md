@@ -14,20 +14,29 @@ astrbot_plugin_gitpulse/
 │   │   └── constants.py     # 常量定义
 │   ├── handlers/              # 事件处理层
 │   │   ├── __init__.py
+│   │   ├── issue_comment_handler.py
 │   │   ├── issues_handler.py
 │   │   ├── pull_request_handler.py
-│   │   └── push_handler.py
+│   │   ├── push_handler.py
+│   │   ├── release_handler.py
+│   │   ├── star_handler.py
+│   │   └── workflow_run_handler.py
 │   ├── formatters/             # 消息格式化层
 │   │   ├── __init__.py
+│   │   ├── issue_comment_formatter.py
 │   │   ├── issues_formatter.py
 │   │   ├── pull_request_formatter.py
-│   │   └── push_formatter.py
+│   │   ├── push_formatter.py
+│   │   ├── release_formatter.py
+│   │   ├── star_formatter.py
+│   │   └── workflow_run_formatter.py
 │   ├── utils/                 # 工具层
 │   │   ├── __init__.py
 │   │   ├── rate_limiter.py     # 请求速率限制器
 │   │   └── verify_signature.py # Webhook 签名验证
 │   └── services/              # 业务服务层
 │       ├── __init__.py
+│       ├── event_filter.py     # enabled_events 订阅白名单解析
 │       ├── llm_service.py      # LLM 调用服务
 │       └── repo_router.py      # 多仓库路由（Repo -> UMO）
 ├── main.py                     # 插件入口文件（AstrBot 加载点）
@@ -92,6 +101,7 @@ src/formatters/ + src/utils/ (工具层)
 | **src/utils/verify_signature.py** | GitHub Webhook HMAC-SHA256 签名验证 |
 | **src/services/llm_service.py** | LLM 消息生成服务 |
 | **src/services/repo_router.py** | 解析 `repo_routes` 并解析仓库对应的目标 UMO 列表 |
+| **src/services/event_filter.py** | 解析 `enabled_events` 订阅白名单 |
 
 ## 数据流
 

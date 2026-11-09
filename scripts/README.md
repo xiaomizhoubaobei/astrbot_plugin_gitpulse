@@ -8,7 +8,7 @@
 
 ### 功能
 
-- 支持 4 种 GitHub 事件类型：push、issues、pull_request、ping
+- 支持 push、issues、pull_request、release、workflow_run、star、watch、issue_comment、ping 事件类型
 - 可自定义服务器地址、端口与 Webhook 路径
 - 支持 webhook 密钥签名
 - 详细的输出模式
@@ -26,6 +26,12 @@
 
 # 发送 Issue 事件
 ./test-webhook.sh issues
+
+# 发送 Release / Workflow Run / Star / 评论事件
+./test-webhook.sh release
+./test-webhook.sh workflow_run
+./test-webhook.sh star
+./test-webhook.sh comment
 
 # 发送 Ping 事件（健康检查）
 ./test-webhook.sh ping
@@ -71,6 +77,11 @@
 | `push` | 推送事件 - 测试代码推送通知 |
 | `issues` | Issue 事件 - 测试 Issue 创建/更新 |
 | `pr` | Pull Request 事件 - 测试 PR 创建/更新 |
+| `release` | Release 事件 - 测试版本发布通知 |
+| `workflow_run` | Workflow Run 事件 - 测试 CI/CD 完成通知（别名 `workflow`） |
+| `star` | Star 事件 - 测试新增 Star 通知 |
+| `watch` | Watch 事件 - 测试旧版 starred 通知（payload 与 `star` 一致） |
+| `comment` | Issue Comment 事件 - 测试 Issue / PR 评论通知 |
 | `ping` | Ping 事件 - 测试服务器连接 |
 
 ### 测试示例

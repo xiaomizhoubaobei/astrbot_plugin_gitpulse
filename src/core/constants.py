@@ -26,7 +26,26 @@ DEFAULT_LLM_TIMEOUT = 60
 EVENT_TYPE_PUSH = "push"
 EVENT_TYPE_ISSUES = "issues"
 EVENT_TYPE_PULL_REQUEST = "pull_request"
+EVENT_TYPE_RELEASE = "release"
+EVENT_TYPE_WORKFLOW_RUN = "workflow_run"
+EVENT_TYPE_STAR = "star"
+EVENT_TYPE_WATCH = "watch"
+EVENT_TYPE_ISSUE_COMMENT = "issue_comment"
 EVENT_TYPE_PING = "ping"
+
+# 支持消息转发的事件类型（ping 仅做健康检查，不参与订阅白名单）。
+SUPPORTED_EVENT_TYPES = frozenset(
+    {
+        EVENT_TYPE_PUSH,
+        EVENT_TYPE_ISSUES,
+        EVENT_TYPE_PULL_REQUEST,
+        EVENT_TYPE_RELEASE,
+        EVENT_TYPE_WORKFLOW_RUN,
+        EVENT_TYPE_STAR,
+        EVENT_TYPE_WATCH,
+        EVENT_TYPE_ISSUE_COMMENT,
+    }
+)
 
 # Issue actions
 ACTION_OPENED = "opened"
@@ -42,3 +61,36 @@ ACTION_PR_REOPENED = "reopened"
 # 历史问题（issue #4）：本常量曾误写为 synchronized，与 formatter 里的
 # synchronize 键拼写漂移，导致 🔀 分支永不命中；切勿再改回 synchronized。
 ACTION_PR_SYNCHRONIZE = "synchronize"
+
+# Release actions（GitHub release 事件的 activity types）
+ACTION_RELEASE_PUBLISHED = "published"
+ACTION_RELEASE_UNPUBLISHED = "unpublished"
+ACTION_RELEASE_CREATED = "created"
+ACTION_RELEASE_EDITED = "edited"
+ACTION_RELEASE_DELETED = "deleted"
+ACTION_RELEASE_PRERELEASED = "prereleased"
+ACTION_RELEASE_RELEASED = "released"
+
+# Workflow run 事件仅转发完成状态，避免 in_progress/requested 造成刷屏
+ACTION_WORKFLOW_COMPLETED = "completed"
+
+# workflow_run.conclusion 枚举
+WORKFLOW_CONCLUSION_SUCCESS = "success"
+WORKFLOW_CONCLUSION_FAILURE = "failure"
+WORKFLOW_CONCLUSION_CANCELLED = "cancelled"
+WORKFLOW_CONCLUSION_SKIPPED = "skipped"
+WORKFLOW_CONCLUSION_TIMED_OUT = "timed_out"
+WORKFLOW_CONCLUSION_ACTION_REQUIRED = "action_required"
+WORKFLOW_CONCLUSION_NEUTRAL = "neutral"
+WORKFLOW_CONCLUSION_STALE = "stale"
+WORKFLOW_CONCLUSION_STARTUP_FAILURE = "startup_failure"
+
+# Star 事件：新版 star 事件用 created/deleted，旧版 watch 事件用 started
+ACTION_STAR_CREATED = "created"
+ACTION_STAR_DELETED = "deleted"
+ACTION_WATCH_STARTED = "started"
+
+# Issue comment 事件的 activity types
+ACTION_COMMENT_CREATED = "created"
+ACTION_COMMENT_EDITED = "edited"
+ACTION_COMMENT_DELETED = "deleted"

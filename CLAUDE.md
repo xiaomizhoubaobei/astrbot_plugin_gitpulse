@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概览
 
-GitPulse 是一个 **AstrBot 插件**（Python 3.12+），用于接收 GitHub Webhook（`push` / `issues` / `pull_request` / `ping`），格式化为聊天消息后转发到 AstrBot 指定会话；可选通过 AstrBot 的 LLM 能力改写消息。插件不是独立进程——由 AstrBot 加载后，自己启动一个 aiohttp HTTP 服务监听配置路径 `webhook_path`（默认 `/webhook`）。
+GitPulse 是一个 **AstrBot 插件**（Python 3.12+），用于接收 GitHub Webhook（`push` / `issues` / `pull_request` / `release` / `workflow_run` / `star` / `watch` / `issue_comment` / `ping`），格式化为聊天消息后转发到 AstrBot 指定会话；可选通过 AstrBot 的 LLM 能力改写消息。插件不是独立进程——由 AstrBot 加载后，自己启动一个 aiohttp HTTP 服务监听配置路径 `webhook_path`（默认 `/webhook`）。
 
 **`AGENTS.md` 是本仓库的权威工程规范**（提交信息、GPG 强制签名、PR 流程、CI 口径、目录约定），优先级高于本文件；动手前先读相关章节。
 
@@ -62,7 +62,7 @@ main.py: PluginEntry（@register 注册的 AstrBot 入口）
 1. 限流（`rate_limit > 0` 时）；
 2. 读取并解析 JSON；
 3. 验签：只要配置了 `webhook_secret` 就必须携带 `X-Hub-Signature-256`——缺少签名头与签名不匹配均返回 401；仅在未配置 `webhook_secret` 时跳过校验；
-4. `X-GitHub-Event` 分发：`ping` 直接回 `Pong`，`push` / `issues` / `pull_request` 交给对应 handler，其它事件只记日志；
+4. `X-GitHub-Event` 分发：`ping` 直接回 `Pong`（不受白名单影响）；`SUPPORTED_EVENT_TYPES` 内的事件先过 `enabled_events` 白名单，再交给对应 handler；未支持或未启用的事件只记日志并回 200；
 5. handler 返回消息字符串或 `None`（`None` 表示不发消息）；
 6. `enable_agent` 为真时走 LLM（失败/超时自动回落到模板消息），否则直接发送。
 
@@ -86,6 +86,7 @@ main.py: PluginEntry（@register 注册的 AstrBot 入口）
 - **默认监听 `0.0.0.0`** 是有意为之（GitHub 需从外部访问），`src/core/constants.py` 中带 `# nosec B104`；暴露面用 `bind_host` 配置收敛。
 - **`webhook_path` 是路由的唯一来源**（默认 `/webhook`）：归一化逻辑在 `src/core/config.py:normalize_webhook_path`，补前导 `/`、去尾 `/`，含空白/查询串/`{}` 等非法字符时回落默认值。AstrBot 的统一 Webhook 面向平台适配器，插件 Web API 需 Dashboard 鉴权，GitHub 无法调用，因此插件仍用独立 aiohttp 服务；与 AstrBot 共用域名时用 `bind_host: 127.0.0.1` + `webhook_path` 走同一反向代理。
 - **多目标发送**：`repo_routes`（JSON 文本）由 `src/services/repo_router.py` 解析，匹配顺序为精确仓库 → `owner/*` → `*` → `target_umo`；空数组表示静音。`send_message(message, target_umos)` 逐目标发送且单目标失败不阻塞其它目标，LLM 链路同样把 `target_umos` 透传到降级发送，勿改回只读 `target_umo`。
+- **事件订阅**：`enabled_events` 由 `src/services/event_filter.py` 解析，留空表示全部启用；配置非法时返回空集合（禁用全部可订阅事件）而不是当作未配置，防止拼写错误意外放开全部事件。新增事件类型须同时加入 `SUPPORTED_EVENT_TYPES`、schema 提示与文档。`workflow_run` 只转发 `completed`，避免 CI 进行中状态刷屏。
 - **LLM 是可选增强**：任何 LLM 异常、空输出、超时，或输出丢失模板中的核心链接，都必须回落到模板消息，不能让 webhook 请求失败。
 - **测试约定**：测试用 `from src.xxx import ...`；formatter/常量这类纯逻辑直接单测，新增动作映射时同步补参数化用例。
 

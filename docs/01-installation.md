@@ -43,6 +43,7 @@ uv pip install -r requirements.txt
   "webhook_path": "/webhook",
   "target_umo": "platform_id:GroupMessage:群号",
   "repo_routes": "",
+  "enabled_events": "",
   "webhook_secret": "your_github_webhook_secret",
   "rate_limit": 10
 }
@@ -88,6 +89,7 @@ sudo systemctl restart astrbot
   5. 配置后，缺少 `X-Hub-Signature-256` 签名头或签名不匹配的请求都会被拒绝（HTTP 401）
 - **Events**: 选择需要触发的事件
   - 建议勾选：`Pushes`, `Issues`, `Pull requests`
+  - 如需版本、CI、Star 或评论通知，再勾选：`Releases`, `Workflow runs`, `Stars`, `Issue comments`
 - **Active**: ✅ 勾选
 
 ### 3. 点击 "Add webhook"

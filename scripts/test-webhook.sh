@@ -37,6 +37,11 @@ GitHub Webhook 测试脚本
     push              Push 事件
     issues            Issue 事件
     pr                Pull Request 事件
+    release           Release 事件
+    workflow_run      Workflow Run 事件（别名 workflow）
+    star              Star 事件（新增 Star）
+    watch             Watch 事件（旧版 starred 事件）
+    comment           Issue / PR 评论事件
     ping              Ping 事件 (健康检查)
 
 示例:
@@ -92,7 +97,7 @@ while [[ $# -gt 0 ]]; do
             show_help
             exit 0
             ;;
-        push|issues|pr|ping)
+        push|issues|pr|release|workflow_run|workflow|star|watch|comment|ping)
             EVENT_TYPE="$1"
             shift
             ;;
@@ -281,6 +286,108 @@ case "$EVENT_TYPE" in
   }
 }'
         send_request "pull_request" "$PAYLOAD"
+        ;;
+
+    release)
+        PAYLOAD='{
+  "action": "published",
+  "release": {
+    "tag_name": "v1.0.0",
+    "name": "First Release",
+    "html_url": "https://github.com/testuser/test-repo/releases/tag/v1.0.0",
+    "prerelease": false,
+    "draft": false
+  },
+  "repository": {
+    "id": 123456789,
+    "name": "test-repo",
+    "full_name": "testuser/test-repo",
+    "private": false
+  },
+  "sender": {
+    "login": "testuser",
+    "type": "User"
+  }
+}'
+        send_request "release" "$PAYLOAD"
+        ;;
+
+    workflow_run|workflow)
+        PAYLOAD='{
+  "action": "completed",
+  "workflow_run": {
+    "id": 123456,
+    "name": "CI",
+    "event": "push",
+    "status": "completed",
+    "conclusion": "success",
+    "head_branch": "main",
+    "html_url": "https://github.com/testuser/test-repo/actions/runs/123456"
+  },
+  "repository": {
+    "id": 123456789,
+    "name": "test-repo",
+    "full_name": "testuser/test-repo",
+    "private": false
+  },
+  "sender": {
+    "login": "testuser",
+    "type": "User"
+  }
+}'
+        send_request "workflow_run" "$PAYLOAD"
+        ;;
+
+    star|watch)
+        PAYLOAD='{
+  "action": "started",
+  "repository": {
+    "id": 123456789,
+    "name": "test-repo",
+    "full_name": "testuser/test-repo",
+    "private": false,
+    "stargazers_count": 128,
+    "html_url": "https://github.com/testuser/test-repo"
+  },
+  "sender": {
+    "login": "testuser",
+    "type": "User"
+  }
+}'
+        # `star` 是新版事件，`watch` 是旧版事件；两者 payload 结构一致
+        send_request "$EVENT_TYPE" "$PAYLOAD"
+        ;;
+
+    comment)
+        PAYLOAD='{
+  "action": "created",
+  "issue": {
+    "number": 42,
+    "title": "Test Issue",
+    "html_url": "https://github.com/testuser/test-repo/issues/42",
+    "pull_request": null
+  },
+  "comment": {
+    "id": 123456,
+    "body": "Looks good to me",
+    "html_url": "https://github.com/testuser/test-repo/issues/42#issuecomment-123456",
+    "user": {
+      "login": "testuser",
+      "type": "User"
+    }
+  },
+  "repository": {
+    "id": 123456789,
+    "name": "test-repo",
+    "full_name": "testuser/test-repo",
+    "private": false
+  },
+  "sender": {
+    "login": "testuser",
+    "type": "User"
+  }
+}'
+        send_request "issue_comment" "$PAYLOAD"
         ;;
 
     ping)

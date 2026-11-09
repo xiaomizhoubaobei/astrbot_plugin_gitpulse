@@ -30,6 +30,12 @@
     "default": "",
     "hint": "可选。JSON 对象，键为仓库全名（owner/repo，支持 owner/* 和 *），值为 UMO 字符串或字符串数组。匹配顺序：精确仓库 → owner/* → * → target_umo。空数组表示该仓库不发送消息。示例：{\"owner/repo_a\": [\"platform:GroupMessage:123\"], \"owner/*\": [\"platform:GroupMessage:456\"]}"
   },
+  "enabled_events": {
+    "description": "启用的事件类型",
+    "type": "text",
+    "default": "",
+    "hint": "可选。逗号分隔或 JSON 数组，支持 push、issues、pull_request、release、workflow_run、star、watch、issue_comment。留空表示启用全部支持的事件。ping 健康检查始终响应。示例：push,issues,pull_request,release"
+  },
   "webhook_secret": {
     "description": "Webhook Secret（可选）",
     "type": "string",

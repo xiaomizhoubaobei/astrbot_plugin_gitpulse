@@ -9,6 +9,7 @@ from typing import Any, get_type_hints
 
 from astrbot.api import AstrBotConfig, logger
 
+from ..services.event_filter import parse_enabled_events
 from ..services.repo_router import parse_repo_routes
 from .constants import DEFAULT_BIND_HOST, DEFAULT_WEBHOOK_PATH
 
@@ -136,6 +137,16 @@ class PluginConfig(ConfigNode):
         """
         return parse_repo_routes(self._data.get("repo_routes"))
 
+    @cached_property
+    def enabled_events(self) -> frozenset[str] | None:
+        """事件订阅白名单；``None`` 表示未配置，启用全部支持的事件."""
+        return parse_enabled_events(self._data.get("enabled_events"))
+
+    def is_event_enabled(self, event_type: str) -> bool:
+        """判断事件类型是否在订阅白名单内（未配置时全部启用）."""
+        enabled = self.enabled_events
+        return enabled is None or event_type in enabled
+
     def __init__(self, cfg: AstrBotConfig):
         """基于 AstrBotConfig 装载配置并输出启动日志."""
         super().__init__(cfg)
@@ -146,6 +157,11 @@ class PluginConfig(ConfigNode):
         logger.info(f"  webhook_path: {self.webhook_path}")
         logger.info(f"  target_umo: {self.target_umo}")
         logger.info(f"  repo_routes: {len(self.repo_routes)} route(s)")
+        enabled = self.enabled_events
+        logger.info(
+            f"  enabled_events: "
+            f"{', '.join(sorted(enabled)) if enabled is not None else 'all'}"
+        )
         logger.info(f"  enable_agent: {self.enable_agent}")
         logger.info(f"  llm_provider_id: {self.llm_provider_id or '(default)'}")
         logger.info(f"  agent_timeout: {self.agent_timeout}s")
