@@ -93,13 +93,14 @@ main.py: PluginEntry（@register 注册的 AstrBot 入口）
 1. `src/handlers/<event>_handler.py` 实现 `async def handle_<event>_event(data, context)`；
 2. `src/formatters/<event>_formatter.py` 实现纯函数格式化；
 3. 在 `src/core/plugin.py` 的 `handle_webhook()` 中按 `X-GitHub-Event` 增加路由；
-4. 补 `tests/` 单测，并更新 `_conf_schema.json`（若新增配置）、`docs/03-usage.md` 与 `CHANGELOG.md`。
+4. 补 `tests/` 单测，并更新 `_conf_schema.json`（若新增配置）与 `docs/03-usage.md`；`CHANGELOG.md` 不随日常 PR 更新。
 
 插件配置项的唯一来源是 `_conf_schema.json`（AstrBot WebUI 据此渲染），代码侧默认值集中在 `src/core/constants.py`。
 
 ## 仓库工作流（强制）
 
 - **提交信息**：全部使用中文，遵循 Angular 格式 `<type>(<scope>): <subject>`（如 `fix(formatter): 修正 PR 同步动作常量`）。
+- **CHANGELOG.md**：只在发版时统一整理（与 `metadata.yaml` 版本号一起提交），日常 PR 不写入未发布条目。
 - **GPG 签名**：每次 `git commit` 前必须先执行 `bash install_gpg_keys.sh`，并在**同一条 shell 命令里** `source .git/gpg-commit-env.sh`，再用 `git commit -S`；推送前确认 `git log --show-signature` 为 `Good signature`。
 - **pre-commit**：提交前 `pre-commit run --all-files`，black / isort / flake8 / mypy / pydocstyle / pylint(E) / gitleaks / shellcheck 必须全绿。
 - **分支与 PR**：禁止直接推送 `main`，一律特性分支 + PR。`.cnb.yml` 会把 `main` 强制同步到 GitHub 镜像仓库 `xiaomizhoubaobei/astrbot_plugin_gitpulse`，因此**同一变更还必须在 GitHub 镜像仓库创建同名同分支的 PR**（AGENTS.md §3.5）。

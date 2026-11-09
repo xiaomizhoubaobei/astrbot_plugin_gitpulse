@@ -856,6 +856,8 @@ pre-commit run --all-files
 >    版本号没动就白跑、动了又容易与 tag 错位；改为 tag 触发后「合入」与「发版」解耦。
 >    **打 tag 前必须先把 `metadata.yaml` 的 `version` 改好并合入**——第 3 步会校验
 >    「tag 名 == `v<metadata version>`」，不一致直接失败（手动触发不受此约束）。
+>    **同时基于本次版本的变更整理 `CHANGELOG.md`**；日常 PR 不写入未发布条目，
+>    避免未发布内容提前进入更新日志。
 >    另：CNB 侧 `.cnb.yml` 只同步 `main` 分支、不搬 tag，故该工作流实际由
 >    **GitHub 镜像仓库侧的 tag push** 触发；要与版本对得上，需在 GitHub 镜像仓库打同一个 tag。
 >    证据包验签身份随之从 `@refs/heads/main` 改为 `@${{ github.ref }}`（tag 触发即 `refs/tags/<tag>`）。
