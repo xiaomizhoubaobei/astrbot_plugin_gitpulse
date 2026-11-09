@@ -313,7 +313,15 @@ jobs:
             # 检查是否存在 CHANGELOG.md
             if [ -f "CHANGELOG.md" ]; then
               # 从 CHANGELOG.md 提取当前版本的更新内容
-              CHANGELOG_CONTENT=$(awk -v version="\\[${VERSION}\\]" '$0 ~ version {found=1} found {print} found && /^## / && !($0 ~ version) {exit}' CHANGELOG.md | tail -n +2)
+              # 用 index() 做字面前缀匹配：版本号里的 "." / "[]" 不能交给正则，
+              # 且 awk -v 会吞掉 "\[" 的反斜杠，导致 [0.0.2] 退化成字符类；
+              # 必须先跳过标题行、遇到下一个 "## " 再退出，避免把旧版本段落带进 Notes。
+              CHANGELOG_CONTENT=$(awk -v version="[${VERSION}]" '
+                index($0, "## " version) == 1 { found=1; next }
+                found && /^## / { exit }
+                found && NF { started=1 }
+                started { print }
+              ' CHANGELOG.md)
 
               if [ -n "$CHANGELOG_CONTENT" ]; then
                 NOTES="## 📦 Release v${VERSION}\n\n${CHANGELOG_CONTENT}"
