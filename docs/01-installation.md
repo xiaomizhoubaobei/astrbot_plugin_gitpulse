@@ -82,6 +82,7 @@ sudo systemctl restart astrbot
   2. 将此处生成的密钥复制到 GitHub Webhook 设置
   3. 用于验证请求来源，防止伪造请求
   4. 留空则禁用签名验证（生产环境不推荐）
+  5. 配置后，缺少 `X-Hub-Signature-256` 签名头或签名不匹配的请求都会被拒绝（HTTP 401）
 - **Events**: 选择需要触发的事件
   - 建议勾选：`Pushes`, `Issues`, `Pull requests`
 - **Active**: ✅ 勾选

@@ -26,6 +26,9 @@
   - 说明：CNB 侧 `.cnb.yml` 只同步 `main` 分支、不搬 tag，故该工作流实际由 GitHub 镜像仓库侧的 tag push 触发
 
 ### 安全
+- 修复签名校验静默放行分支（CNB Issue #8）：配置 `webhook_secret` 后，缺少 `X-Hub-Signature-256` 头的请求不再被跳过校验
+  - `src/core/plugin.py` 将判断拆分为「未配置 secret 才跳过」「缺少签名头返回 401 `Missing signature`」「签名不匹配返回 401 `Invalid signature`」
+  - 补充缺失/空签名头的单元测试，并同步配置说明、安装文档与排错文档
 - 同步 GitHub 镜像仓库 StepSecurity 安全加固 PR（xiaomizhoubaobei/astrbot_plugin_gitpulse#14）
   - `.pre-commit-config.yaml` 新增 `gitleaks`（密钥扫描）、`shellcheck`（Shell 脚本检查）、`pylint` 三个钩子
   - `.github/dependabot.yml` 新增 `directory: /src` 的 pip 生态条目，跟踪 `src/requirements.txt`

@@ -91,7 +91,14 @@ class GitHubWebhookPlugin(Star):
             return web.Response(status=400, text="Failed to read request")
 
         # Signature verification
-        if self.cfg.webhook_secret and signature:
+        # 只要配置了 secret 就必须验签：缺少签名头与签名不匹配同样拒绝，
+        # 避免「无签名头即静默放行」的绕过路径。
+        if self.cfg.webhook_secret:
+            if not signature:
+                logger.warning(
+                    "GitHub Webhook: Missing signature header - request rejected"
+                )
+                return web.Response(status=401, text="Missing signature")
             if not verify_signature(payload_bytes, signature, self.cfg.webhook_secret):
                 logger.warning("GitHub Webhook: Invalid signature - request rejected")
                 return web.Response(status=401, text="Invalid signature")

@@ -185,13 +185,21 @@ async def test_invalid_signature_is_rejected():
 
 
 @pytest.mark.asyncio
-async def test_signature_header_absent_is_not_verified():
-    """配置了 secret 但请求未带签名头时跳过校验（与现有文档口径一致）."""
-    plugin = _make_plugin(webhook_secret="top-secret")
+@pytest.mark.parametrize("header_mode", ["absent", "empty"])
+async def test_missing_signature_header_is_rejected(header_mode):
+    """配置了 secret 但没有签名头（缺失或空值）时返回 401，不再静默放行."""
+    context = _FakeContext()
+    plugin = _make_plugin(context, webhook_secret="top-secret")
+    request = _request("push", b"{}")
+    if header_mode == "empty":
+        request.headers["X-Hub-Signature-256"] = ""
 
-    response = await plugin.handle_webhook(_request("ping"))
+    response = await plugin.handle_webhook(request)
 
-    assert response.status == 200
+    assert response.status == 401
+    assert response.text == "Missing signature"
+    # 未通过验签的请求不得进入事件处理与消息发送
+    assert context.sent == []
 
 
 @pytest.mark.asyncio

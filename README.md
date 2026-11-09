@@ -71,7 +71,7 @@ sudo systemctl restart astrbot
 1. 进入 GitHub 仓库 → **Settings** → **Webhooks** → **Add webhook**
 2. **Payload URL**: `http://你的服务器IP:8080/webhook`
 3. **Content type**: `application/json`
-4. **Secret** (可选): 配置 Webhook 密钥用于签名验证
+4. **Secret** (可选): 配置 Webhook 密钥用于签名验证（配置后缺少签名头或签名不匹配的请求会被拒绝）
 5. **Events**: 选择需要触发的事件（建议勾选 Pushes, Issues, Pull requests）
 6. **Active**: ✅ 勾选
 7. 点击 "Add webhook"

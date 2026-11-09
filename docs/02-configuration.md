@@ -48,6 +48,7 @@ GitHub Webhook 密钥，用于验证请求来源。
 - 在 GitHub 仓库 Webhook 设置中创建后可获取
 - 用于验证请求来源，防止恶意请求
 - 留空则禁用签名验证（生产环境不推荐）
+- 配置后，请求必须携带 `X-Hub-Signature-256` 头：缺少该头返回 HTTP 401（`Missing signature`），签名不匹配同样返回 HTTP 401（`Invalid signature`）
 
 **配置方式**：
 1. 在 GitHub 仓库 → Settings → Webhooks → Add webhook

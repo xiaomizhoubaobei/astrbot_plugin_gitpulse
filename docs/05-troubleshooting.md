@@ -137,6 +137,7 @@ GitHub Webhook: LLM output suspiciously short (input: 523 chars, output: 312 cha
 1. GitHub 仓库中的 Secret 配置与插件不一致
 2. 插件配置中包含多余空格或隐藏字符
 3. Secret 在复制粘贴时引入了错误字符
+4. 请求未携带 `X-Hub-Signature-256` 头（如自建脚本或反向代理改造了请求）：配置 `webhook_secret` 后，缺少签名头的请求会返回 HTTP 401 `Missing signature`，签名不匹配则返回 `Invalid signature`
 
 ### 解决方法
 

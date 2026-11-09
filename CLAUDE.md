@@ -60,7 +60,7 @@ main.py: PluginEntry（@register 注册的 AstrBot 入口）
 
 1. 限流（`rate_limit > 0` 时）；
 2. 读取并解析 JSON；
-3. 验签：仅当配置了 `webhook_secret` **且**请求带 `X-Hub-Signature-256` 时校验，失败返回 401（无签名头则跳过）；
+3. 验签：只要配置了 `webhook_secret` 就必须携带 `X-Hub-Signature-256`——缺少签名头与签名不匹配均返回 401；仅在未配置 `webhook_secret` 时跳过校验；
 4. `X-GitHub-Event` 分发：`ping` 直接回 `Pong`，`push` / `issues` / `pull_request` 交给对应 handler，其它事件只记日志；
 5. handler 返回消息字符串或 `None`（`None` 表示不发消息）；
 6. `enable_agent` 为真时走 LLM（失败/超时自动回落到模板消息），否则直接发送。
