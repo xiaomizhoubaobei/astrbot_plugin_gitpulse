@@ -228,15 +228,25 @@ MINE="$(
   node - "${WORK}/comments.jsonl" "${COMMENT_AUTHOR}" "${MARKER}" <<'FIND'
 const fs = require("node:fs");
 const [commentsPath, author, marker] = process.argv.slice(2);
-for (const line of fs.readFileSync(commentsPath, "utf8").split("\n")) {
-  if (line === "") continue;
-  const comment = JSON.parse(line);
-  if (typeof comment.body !== "string" || !comment.body.startsWith(marker)) continue;
-  if (author !== "" && comment.author?.username !== author) continue;
-  if (comment.id === undefined || comment.id === null) continue;
-  process.stdout.write(String(comment.id));
-  break;
-}
+const comments = fs
+  .readFileSync(commentsPath, "utf8")
+  .split("\n")
+  .filter((line) => line !== "")
+  .map((line) => JSON.parse(line))
+  .filter(
+    (comment) =>
+      typeof comment.body === "string" &&
+      comment.body.startsWith(marker) &&
+      comment.id !== undefined &&
+      comment.id !== null,
+  );
+
+// 优先更新作者匹配的评论；平台把流水线令牌映射成 bot 账号时作者名可能对不上，
+// 此时回退到最早一条带标记的评论，避免每次运行都新发一条。
+const preferred =
+  author !== "" ? comments.find((comment) => comment.author?.username === author) : undefined;
+const chosen = preferred ?? comments[0];
+if (chosen !== undefined) process.stdout.write(String(chosen.id));
 FIND
 )"
 
