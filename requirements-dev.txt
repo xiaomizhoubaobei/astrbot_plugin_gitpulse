@@ -16,5 +16,5 @@
 # 单测仍可跑通——这也是 CI 未强制安装宿主的原因。
 
 pytest>=9.2.0
-pytest-asyncio>=0.23
+pytest-asyncio>=1.4.1.post1
 coverage>=7.0
