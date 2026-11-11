@@ -109,10 +109,54 @@ async def test_tag_creation_push_renders_tag_ref():
 
 
 @pytest.mark.asyncio
-async def test_push_event_without_commits_returns_none():
-    """没有提交（如删除分支）时不发送消息。"""
-    assert await handle_push_event(_make_payload(commits=[]), context=None) is None
-    assert await handle_push_event({"ref": "refs/heads/main"}, context=None) is None
+async def test_deleted_branch_push_renders_lifecycle_message():
+    """删除分支的 push（commits 为空）应发送生命周期通知，不再静默丢弃。"""
+    payload = _make_payload(
+        ref="refs/heads/feature/gone",
+        commits=[],
+        deleted=True,
+        after="0" * 40,
+    )
+
+    message = await handle_push_event(payload, context=None)
+
+    assert message is not None
+    assert "deleted branch feature/gone" in message
+    assert "🔗 Commit" not in message
+
+
+@pytest.mark.asyncio
+async def test_created_tag_push_renders_lifecycle_message():
+    """创建 Tag 的 push（commits 为空）应通知并可展示目标提交。"""
+    payload = _make_payload(
+        ref="refs/tags/v2.0.0",
+        commits=[],
+        created=True,
+        after="abcdef1234567890",
+    )
+
+    message = await handle_push_event(payload, context=None)
+
+    assert message is not None
+    assert "created tag v2.0.0" in message
+    assert "abcdef1" in message
+
+
+@pytest.mark.asyncio
+async def test_forced_push_without_commits_renders_lifecycle_message():
+    """force-push 且 commits 为空时也应通知。"""
+    payload = _make_payload(commits=[], forced=True)
+
+    message = await handle_push_event(payload, context=None)
+
+    assert message is not None
+    assert "force-pushed branch main" in message
+
+
+@pytest.mark.asyncio
+async def test_push_event_with_neither_commits_nor_ref_returns_none():
+    """既无提交也无 ref 的异常 payload 不应产生通知。"""
+    assert await handle_push_event({"pusher": {"name": "alice"}}, context=None) is None
 
 
 @pytest.mark.asyncio

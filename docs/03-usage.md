@@ -40,6 +40,39 @@
 - 每条只保留短 ID 与提交信息首行，超长信息自动截断，避免撑爆消息。
 - 汇总链接指向本次推送的最新提交。
 
+### 无 commit 的 ref 生命周期事件
+
+GitHub 在创建/删除分支或 Tag、以及部分 force-push 的 push 事件中，`commits`
+列表为空。插件会按 `created` / `deleted` / `forced` 标记转发这类事件，不再静默丢弃。
+
+**删除分支**：
+
+```
+🗑️ GitHub Push Event
+👤 username deleted branch feature/old in owner/repo
+```
+
+**创建分支 / Tag**（`after` 非全 0 时附带目标提交）：
+
+```
+🌱 GitHub Push Event
+👤 username created branch feature/new in owner/repo
+🔗 Commit: abc1234
+```
+
+```
+🏷️ GitHub Push Event
+👤 username created tag v1.2.3 in owner/repo
+🔗 Commit: abc1234
+```
+
+**Force push（无 commit）**：
+
+```
+🔄 GitHub Push Event
+👤 username force-pushed branch main in owner/repo
+```
+
 ### LLM 生成示例
 
 ```

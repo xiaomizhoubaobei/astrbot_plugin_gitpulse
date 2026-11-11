@@ -3,6 +3,7 @@
 from src.formatters.push_formatter import (
     MAX_DISPLAYED_COMMITS,
     format_push_message,
+    format_push_ref_message,
 )
 
 
@@ -79,3 +80,84 @@ def test_overlong_message_truncated():
     # 单行摘要不会超过上限太多
     longest = max(len(line) for line in message.splitlines())
     assert longest <= 100
+
+
+def test_created_branch_ref_message():
+    """新建分支（无 commits）应渲染分支生命周期通知与目标提交。"""
+    message = format_push_ref_message(
+        "alice",
+        "owner/repo",
+        "refs/heads/feature/new",
+        created=True,
+        commit_sha="abcdef1234567890",
+    )
+
+    assert "🌱 GitHub Push Event" in message
+    assert "alice created branch feature/new in owner/repo" in message
+    assert "🔗 Commit: abcdef1" in message
+
+
+def test_created_tag_ref_message():
+    """新建 Tag（无 commits）应使用 Tag 语义与标签 emoji。"""
+    message = format_push_ref_message(
+        "alice",
+        "owner/repo",
+        "refs/tags/v1.0.0",
+        created=True,
+        commit_sha="abcdef1234567890",
+    )
+
+    assert "🏷️ GitHub Push Event" in message
+    assert "alice created tag v1.0.0 in owner/repo" in message
+
+
+def test_deleted_branch_ref_message():
+    """删除分支应渲染删除通知，且不展示全 0 的 after SHA。"""
+    message = format_push_ref_message(
+        "alice",
+        "owner/repo",
+        "refs/heads/feature/gone",
+        deleted=True,
+        commit_sha="0" * 40,
+    )
+
+    assert "🗑️ GitHub Push Event" in message
+    assert "alice deleted branch feature/gone in owner/repo" in message
+    assert "🔗 Commit" not in message
+
+
+def test_deleted_tag_ref_message():
+    """删除 Tag 应使用 Tag 语义。"""
+    message = format_push_ref_message(
+        "alice",
+        "owner/repo",
+        "refs/tags/v1.0.0",
+        deleted=True,
+    )
+
+    assert "alice deleted tag v1.0.0 in owner/repo" in message
+
+
+def test_forced_push_ref_message():
+    """force-push（无 commits）应渲染强制推送通知。"""
+    message = format_push_ref_message(
+        "alice",
+        "owner/repo",
+        "refs/heads/main",
+        forced=True,
+    )
+
+    assert "🔄 GitHub Push Event" in message
+    assert "alice force-pushed branch main in owner/repo" in message
+
+
+def test_unrecognized_ref_uses_generic_kind():
+    """未知 ref 前缀回退为通用 ref，不误判为分支或 Tag。"""
+    message = format_push_ref_message(
+        "alice",
+        "owner/repo",
+        "refs/merge-requests/1/head",
+    )
+
+    assert "📦 GitHub Push Event" in message
+    assert "pushed to ref refs/merge-requests/1/head in owner/repo" in message

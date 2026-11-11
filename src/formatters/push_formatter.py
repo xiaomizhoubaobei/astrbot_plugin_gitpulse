@@ -10,6 +10,10 @@ MAX_DISPLAYED_COMMITS = 5
 # 单条 commit 摘要的最大字符数，超出截断，避免长提交信息撑爆消息
 COMMIT_MESSAGE_LIMIT = 72
 
+# GitHub push 事件的 ref 前缀：据此区分分支、Tag 与其它 ref
+REF_HEADS_PREFIX = "refs/heads/"
+REF_TAGS_PREFIX = "refs/tags/"
+
 
 def _short_message(message: str) -> str:
     """把 commit 信息压成单行：去掉换行、压缩空白、超长截断."""
@@ -28,6 +32,55 @@ def _normalize_commit(commit: Mapping[str, Any]) -> dict[str, str]:
         "message": _short_message(commit.get("message") or "No message"),
         "id": (commit.get("id") or "")[:7],
     }
+
+
+def _parse_ref(ref: str) -> tuple[str, str]:
+    """把完整 ref 解析为（类型, 名称），无法识别的前缀按通用 ref 处理."""
+    if ref.startswith(REF_TAGS_PREFIX):
+        return "tag", ref[len(REF_TAGS_PREFIX) :] or "Unknown"
+    if ref.startswith(REF_HEADS_PREFIX):
+        return "branch", ref[len(REF_HEADS_PREFIX) :] or "Unknown"
+    return "ref", ref or "Unknown"
+
+
+def format_push_ref_message(
+    author_name: str,
+    repo_name: str,
+    ref: str,
+    *,
+    created: bool = False,
+    deleted: bool = False,
+    forced: bool = False,
+    commit_sha: str = "",
+) -> str:
+    """Format push event message for ref lifecycle events without commits.
+
+    GitHub 在创建/删除分支或 Tag、以及部分 force-push 的 push 事件中，
+    payload 的 commits 列表为空。此时按 created/deleted/forced 标记渲染
+    ref 生命周期通知，避免这类事件被静默丢弃。
+    """
+    ref_kind, ref_name = _parse_ref(ref)
+
+    if deleted:
+        emoji, action = "🗑️", "deleted"
+    elif created:
+        emoji = "🏷️" if ref_kind == "tag" else "🌱"
+        action = "created"
+    elif forced:
+        emoji, action = "🔄", "force-pushed"
+    else:
+        emoji, action = "📦", "pushed to"
+
+    lines = [
+        f"{emoji} GitHub Push Event",
+        f"👤 {author_name} {action} {ref_kind} {ref_name} in {repo_name}",
+    ]
+
+    # 仅新建 ref 附带目标提交短 SHA；删除事件的 after 为全 0，不再展示。
+    short_sha = (commit_sha or "").strip()[:7]
+    if created and short_sha and set(short_sha) != {"0"}:
+        lines.append(f"🔗 Commit: {short_sha}")
+    return "\n".join(lines)
 
 
 def format_push_message(

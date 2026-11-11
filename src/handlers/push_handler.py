@@ -2,7 +2,7 @@
 
 from astrbot.api import logger
 
-from ..formatters.push_formatter import format_push_message
+from ..formatters.push_formatter import format_push_message, format_push_ref_message
 
 
 async def handle_push_event(data: dict, context):
@@ -19,8 +19,20 @@ async def handle_push_event(data: dict, context):
 
         commits = data.get("commits", [])
         if not commits:
-            logger.warning("GitHub Webhook: Push event has no commits")
-            return None
+            # 创建/删除分支或 Tag、force-push 等 push 事件可能不带 commits；
+            # 旧逻辑直接丢弃会把这类生命周期事件静默吞掉，这里改为渲染 ref 通知。
+            if not ref:
+                logger.warning("GitHub Webhook: Push event has neither commits nor ref")
+                return None
+            return format_push_ref_message(
+                author_name=author_name,
+                repo_name=repo_name,
+                ref=ref,
+                created=bool(data.get("created")),
+                deleted=bool(data.get("deleted")),
+                forced=bool(data.get("forced")),
+                commit_sha=data.get("after", ""),
+            )
 
         # 不再只取 commits[0]，而是把全部 commit 交给格式化层渲染，
         # 由格式化层按上限折叠，避免多条提交被静默丢弃，同时控制消息长度。
