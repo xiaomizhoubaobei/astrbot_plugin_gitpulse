@@ -96,3 +96,21 @@ main:
                 - python -m pip install -U pip
                 - pip install -r requirements-dev.txt
                 - python -m pytest tests -q
+
+        # PR Lens：把 PR 的 diff 画成架构图 / 数据流图 / 数据模型图（SVG），并在 PR
+        # 中维护一条可更新的评论。默认使用 CNB 内置模型与流水线临时令牌（CNB_TOKEN），
+        # 不需要额外密钥仓库；diff 只会发送给该模型服务，图片发布到孤儿分支 pr-lens。
+        # 镜像固定到已发布的 0.0.2（经核对与 latest 的 digest 一致），避免 latest 漂移。
+        pr-lens:
+          name: PR Lens
+          # 同一 PR 的新提交会取消旧运行，避免重复消耗模型额度；
+          # 插件写入前也会校验 head SHA，不会覆盖更新提交对应的图。
+          lock:
+            key: pr-lens-$CNB_PULL_REQUEST_IID
+            cancel-in-progress: true
+          # 按 AGENTS.md §4.2 声明 docker 服务
+          services:
+            - docker
+          stages:
+            - name: 生成架构图并更新评论
+              image: docker.cnb.cool/xmzzuzhi/github/pr-lens/pr-lens:0.0.2
