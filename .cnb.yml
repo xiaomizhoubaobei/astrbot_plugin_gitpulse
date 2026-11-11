@@ -98,10 +98,10 @@ main:
                 - python -m pytest tests -q
 
         # PR Lens：把 PR 的 diff 画成架构图 / 数据流图 / 数据模型图（SVG），并在 PR
-        # 中维护一条可更新的评论。图片经自托管 mint 服务（selfhost/fc，部署在阿里云 FC）
-        # 换取短期预签名 URL 后上传到腾讯云 COS，再由 EdgeOne 自定义域名对外提供；
-        # 流水线不接触腾讯云长期密钥，仓库也不需要 repo-code:rw。
-        # 镜像固定到已发布的 0.0.2（经核对与 latest 的 digest 一致），自带 CLI 与 node/curl/git。
+        # 中维护一条可更新的评论。图片经自托管 mint 服务（腾讯云 SCF 广州，源码在
+        # XMZZUZHI/Github/pr-lens 的 src/selfhost）换取短期预签名 URL 后上传到腾讯云
+        # COS 广州，再由 EdgeOne 自定义域名对外提供；流水线不接触腾讯云长期密钥，
+        # 仓库也不需要 repo-code:rw。镜像固定到已发布的 0.0.2，自带 CLI 与 node/curl/git。
         pr-lens:
           name: PR Lens
           # 同一 PR 的新提交会取消旧运行，避免重复消耗模型额度；
@@ -116,6 +116,6 @@ main:
             - name: 生成架构图并更新评论
               image: docker.cnb.cool/xmzzuzhi/github/pr-lens/pr-lens:0.0.2
               env:
-                PR_LENS_HOST: https://pr-lens-eqkeyznvxz.cn-shanghai.fcapp.run
+                PR_LENS_HOST: https://1329111128-lix1804oa9.ap-guangzhou.tencentscf.com
               script:
                 - bash selfhost/ci/pr-lens.sh
