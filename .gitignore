@@ -47,3 +47,6 @@ handoff-private*.pem
 # 注意：Linux 文件系统区分大小写，两个目录需分别忽略
 /AstrBot/
 /astrbot/
+
+# PR Lens 本地/流水线工作目录（图文档与 SVG 中间产物，不入库）
+.pr-lens/
