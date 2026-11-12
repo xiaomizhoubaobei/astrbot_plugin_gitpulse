@@ -213,6 +213,40 @@ ls -la data/config/astrbot_plugin_gitpulse_config.json
 chmod 644 data/config/astrbot_plugin_gitpulse_config.json
 ```
 
+## 启动时报端口被占用（Address already in use）
+
+### 现象
+
+插件启动或热重载时日志出现类似内容，随后插件加载失败：
+
+```
+GitHub Webhook: Port 8080 is in use (...), retrying in 1.0s (1/3 attempts used)
+GitHub Webhook: Port 8080 is still in use after 3 attempts. Change the 'port' config or free the port (e.g. lsof -i :8080) and restart
+OSError: [Errno 98] Address already in use
+```
+
+### 可能原因
+
+1. 另一个进程（或上一个 AstrBot 实例）仍占用该端口
+2. 旧实例尚未完全退出，端口仍处于 `TIME_WAIT` 或仍被监听
+3. 启动了两个 AstrBot 实例，配置了相同的 `port`
+
+### 解决方法
+
+插件启动时最多尝试 3 次（首次失败后按指数退避重试 2 次，间隔 1s、2s），给旧实例释放端口的时间。
+重试后仍失败时：
+
+1. 查看是哪个进程占用端口：
+
+   ```bash
+   lsof -i :8080        # Linux / macOS
+   ss -lptn 'sport = :8080'
+   ```
+
+2. 结束残留进程，或在 WebUI 中把 `port` 改成其它空闲端口（并同步更新仓库 Webhook 的 Payload URL）。
+
+> 反向代理场景可将 `bind_host` 设为 `127.0.0.1`，并确认只启动一个 AstrBot 实例。
+
 ## 获取更多帮助
 
 如果以上方法都无法解决你的问题：

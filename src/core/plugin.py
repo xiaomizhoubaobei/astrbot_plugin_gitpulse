@@ -1,6 +1,7 @@
 """GitPulse plugin core implementation."""
 
 import asyncio
+import errno
 import json
 
 from aiohttp import web
@@ -30,8 +31,22 @@ from .constants import (
     EVENT_TYPE_STAR,
     EVENT_TYPE_WATCH,
     EVENT_TYPE_WORKFLOW_RUN,
+    SERVER_START_MAX_ATTEMPTS,
+    SERVER_START_RETRY_BASE_DELAY,
     SUPPORTED_EVENT_TYPES,
 )
+
+
+def _is_address_in_use(error: OSError) -> bool:
+    """判断 OSError 是否由端口被占用（EADDRINUSE）引起."""
+    if error.errno == errno.EADDRINUSE:
+        return True
+    # Windows 的 asyncio 会抛 WSAEADDRINUSE（10048）而非 errno.EADDRINUSE。
+    # POSIX 没有该常量，用 -1 作哨兵：若用 None 作默认值，errno 为 None 的
+    # OSError 会被误判为端口占用并做无意义重试。
+    if error.errno == getattr(errno, "WSAEADDRINUSE", -1):
+        return True
+    return getattr(error, "winerror", None) == 10048
 
 
 class GitHubWebhookPlugin(Star):
@@ -67,12 +82,54 @@ class GitHubWebhookPlugin(Star):
         await self.runner.setup()
         # 监听地址来自配置（默认 0.0.0.0，可用 bind_host 收敛到 127.0.0.1
         # 配合反向代理），不再在代码里硬编码通配地址。
-        self.site = web.TCPSite(self.runner, self.cfg.bind_host, self.cfg.port)
-        await self.site.start()
+        try:
+            self.site = await self._start_site_with_retry()
+        except OSError:
+            # 启动失败时释放 runner，避免残留已 setup 的应用资源
+            await self.runner.cleanup()
+            self.runner = None
+            self.site = None
+            raise
         logger.info(
             f"GitHub Webhook: Server started on "
             f"{self.cfg.bind_host}:{self.cfg.port}{self.cfg.webhook_path}"
         )
+
+    async def _start_site_with_retry(self) -> web.TCPSite:
+        """绑定配置地址；端口被占用时按指数退避重试，仍失败则抛出 OSError."""
+        if self.runner is None:  # pragma: no cover - 仅防御性检查
+            raise RuntimeError("runner is not initialized")
+
+        host, port = self.cfg.bind_host, self.cfg.port
+        for attempt in range(1, SERVER_START_MAX_ATTEMPTS + 1):
+            site = web.TCPSite(self.runner, host, port)
+            try:
+                await site.start()
+                return site
+            except OSError as error:
+                if not _is_address_in_use(error):
+                    logger.error(
+                        f"GitHub Webhook: Failed to bind {host}:{port}: {error}. "
+                        f"Check that bind_host is a local address and port is valid"
+                    )
+                    raise
+                if attempt >= SERVER_START_MAX_ATTEMPTS:
+                    logger.error(
+                        f"GitHub Webhook: Port {port} is still in use after "
+                        f"{SERVER_START_MAX_ATTEMPTS} attempts. Change the 'port' "
+                        f"config or free the port (e.g. lsof -i :{port}) and restart"
+                    )
+                    raise
+                delay = SERVER_START_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                logger.warning(
+                    f"GitHub Webhook: Port {port} is in use ({error}), retrying "
+                    f"in {delay:.1f}s "
+                    f"({attempt}/{SERVER_START_MAX_ATTEMPTS} attempts used)"
+                )
+                await asyncio.sleep(delay)
+
+        # 循环只会通过 return 或 raise 退出，此处仅为类型完备
+        raise RuntimeError("unreachable")  # pragma: no cover
 
     async def handle_webhook(self, request: web.Request):
         """处理 GitHub webhook 请求：限流、验签、分发并回包."""

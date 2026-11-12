@@ -1,9 +1,11 @@
 """Tests for the core webhook plugin."""
 
 import asyncio
+import errno
 import hashlib
 import hmac
 import json
+import socket
 
 import aiohttp
 import pytest
@@ -655,6 +657,98 @@ async def test_start_server_and_terminate():
         assert plugin.site is not first_site
     finally:
         await plugin.terminate()
+
+
+def _occupy_port():
+    """占用回环地址上的随机端口，返回 (socket, port)."""
+    occupied = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    occupied.bind((_LOOPBACK_HOST, 0))
+    occupied.listen(1)
+    return occupied, occupied.getsockname()[1]
+
+
+def test_is_address_in_use_matches_errno():
+    """只有 EADDRINUSE（含 Windows 的 WSAEADDRINUSE）才判定为端口占用."""
+    assert plugin_module._is_address_in_use(OSError(errno.EADDRINUSE, "in use"))
+    assert not plugin_module._is_address_in_use(OSError(errno.EACCES, "denied"))
+    assert not plugin_module._is_address_in_use(OSError(errno.EADDRNOTAVAIL, "bad"))
+
+
+def test_is_address_in_use_ignores_oserror_without_errno():
+    """errno 为 None 的 OSError 不得被误判为端口占用（POSIX 无 WSAEADDRINUSE）."""
+    assert not plugin_module._is_address_in_use(OSError("bind failed"))
+
+
+def test_is_address_in_use_matches_windows_winerror():
+    """Windows 上仅带 winerror=10048 的 OSError 也应判定为端口占用."""
+    error = OSError("bind failed")
+    error.winerror = 10048  # type: ignore[attr-defined]
+    assert plugin_module._is_address_in_use(error)
+
+
+@pytest.mark.asyncio
+async def test_start_server_retries_after_port_released(monkeypatch):
+    """端口短暂被占用时按退避重试，释放后应能成功启动."""
+    monkeypatch.setattr(plugin_module, "SERVER_START_MAX_ATTEMPTS", 3)
+    monkeypatch.setattr(plugin_module, "SERVER_START_RETRY_BASE_DELAY", 0.05)
+    occupied, port = _occupy_port()
+
+    async def release_port():
+        await asyncio.sleep(0.01)
+        occupied.close()
+
+    release_task = asyncio.create_task(release_port())
+    plugin = _make_plugin(port=port, bind_host=_LOOPBACK_HOST)
+    try:
+        await plugin.start_server()
+        assert plugin.site is not None
+    finally:
+        await plugin.terminate()
+        occupied.close()
+        await release_task
+
+
+@pytest.mark.asyncio
+async def test_start_server_fails_after_retries_when_port_stays_busy(monkeypatch):
+    """端口持续被占用时，重试耗尽后抛出 OSError 并清理 runner/site."""
+    monkeypatch.setattr(plugin_module, "SERVER_START_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(plugin_module, "SERVER_START_RETRY_BASE_DELAY", 0)
+    occupied, port = _occupy_port()
+    plugin = _make_plugin(port=port, bind_host=_LOOPBACK_HOST)
+    try:
+        with pytest.raises(OSError):
+            await plugin.start_server()
+        assert plugin.site is None
+        assert plugin.runner is None
+    finally:
+        occupied.close()
+
+
+@pytest.mark.asyncio
+async def test_start_server_does_not_retry_on_other_bind_errors(monkeypatch):
+    """非端口占用的绑定错误（如权限不足）应立即失败，不做重试."""
+    attempts = []
+
+    class _FailingSite:
+        """任意绑定都抛 EACCES 的 TCPSite 桩，用于断言不做重试."""
+
+        def __init__(self, runner, host, port):
+            """记录每次尝试绑定的地址."""
+            attempts.append((host, port))
+
+        async def start(self):
+            """模拟权限不足的绑定失败."""
+            raise OSError(errno.EACCES, "permission denied")
+
+    monkeypatch.setattr(plugin_module.web, "TCPSite", _FailingSite)
+    plugin = _make_plugin(port=8080, bind_host=_LOOPBACK_HOST)
+
+    with pytest.raises(OSError):
+        await plugin.start_server()
+
+    assert len(attempts) == 1
+    assert plugin.runner is None
+    assert plugin.site is None
 
 
 @pytest.mark.asyncio

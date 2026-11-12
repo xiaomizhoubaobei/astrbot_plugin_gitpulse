@@ -11,6 +11,13 @@ DEFAULT_PORT = 8080
 # 默认值而非疏漏，按 bandit 官方方式就地标注 nosec。
 DEFAULT_BIND_HOST = "0.0.0.0"  # nosec B104
 
+# Webhook 服务启动时端口被占用的重试策略。
+# 热重载 / AstrBot 重启后旧端口可能仍被占用（其它进程持有，或少数平台
+# 未及时释放 TIME_WAIT），直接启动会抛 OSError 让插件加载失败，因此按
+# 指数退避重试有限次数；仍失败则给出可操作的错误提示。
+SERVER_START_MAX_ATTEMPTS = 3
+SERVER_START_RETRY_BASE_DELAY = 1.0  # seconds，第 n 次重试等待 base * 2^(n-1)
+
 # Webhook 路由路径的默认值。
 # 允许用户改成 /github/webhook 之类的前缀，便于与 AstrBot 共用同一个域名
 # 和反向代理；默认值保持向后兼容。
