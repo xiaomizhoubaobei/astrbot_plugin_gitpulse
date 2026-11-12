@@ -106,7 +106,7 @@ main.py: PluginEntry（@register 注册的 AstrBot 入口）
 - **提交信息**：全部使用中文，遵循 Angular 格式 `<type>(<scope>): <subject>`（如 `fix(formatter): 修正 PR 同步动作常量`）。
 - **CHANGELOG.md**：只在发版时统一整理（与 `metadata.yaml` 版本号一起提交），日常 PR 不写入未发布条目。
 - **GPG 签名**：每次 `git commit` 前必须先执行 `bash install_gpg_keys.sh`，并在**同一条 shell 命令里** `source .git/gpg-commit-env.sh`，再用 `git commit -S`；推送前确认 `git log --show-signature` 为 `Good signature`。
-- **pre-commit**：提交前 `pre-commit run --all-files`，black / isort / flake8 / mypy / pydocstyle / pylint(E) / gitleaks / shellcheck 必须全绿。
+- **pre-commit**：提交前 `pre-commit run --all-files`，black / isort / flake8 / mypy / pydocstyle / pylint(E) / gitleaks / shellcheck 必须全绿；完整门禁步骤（移开根目录副本 → 测试/覆盖率 → pre-commit → GPG 签名 → 双端推送）见 `.claude/skills/preflight/SKILL.md`。
 - **分支与 PR**：禁止直接推送 `main`，一律特性分支 + PR。`.cnb.yml` 会把 `main` 强制同步到 GitHub 镜像仓库 `xiaomizhoubaobei/astrbot_plugin_gitpulse`，因此**同一变更还必须在 GitHub 镜像仓库创建同名同分支的 PR**（AGENTS.md §3.5）。
 - **发版**：`metadata.yaml` 的 `version` 先合入，再在 GitHub 镜像仓库打 `v<version>` tag（`release.yml` 会校验 tag 与版本一致）。
 
