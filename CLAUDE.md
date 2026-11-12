@@ -154,6 +154,16 @@ curl -sS -X PATCH \
 - 更新已发表的评论：`PATCH https://api.cnb.cool/<repo>/-/issues/<number>/comments/<comment_id>`，body 为 `{"body":"..."}`。
 - 关闭后复核：`GET https://api.cnb.cool/<repo>/-/issues/<number>` 的 `state` 应为 `closed`、`comment_count` 至少为 1；必要时抓取 Issue 页面确认 Markdown 链接已正确渲染。
 
+## 百炼记忆库（Claude Code 工作纪律）
+
+本组织用阿里云百炼共享记忆库跨仓库沉淀可复用结论。Claude Code 必须主动读写，不等用户提醒；具体命令见 `.claude/skills/bailian-memory/SKILL.md`。
+
+- **开场检索**：非一次性任务开始前先 `search`（用任务关键词或报错原文，`similarity_threshold` 0.5~0.7）；命中优先复用，返回空属正常，不重试。
+- **收尾沉淀**：仅当产出跨仓库可复用结论（平台约定、踩坑解法、用户长期偏好、字段口径）时 `add`；一次一条、≤512 字符，写清「结论 + 适用场景」，并带 `repo_slug` / `repo_scope` / `user_identity` 元数据。
+- **先查重再写**：已有结论用 `update` 补充，不要重复 `add`；结论失效用 `update` 修正或 `delete` 退役（删前先 `search` / `list` 确认 `memory_node_id`，删除不可恢复）。
+- **不写入**：逐次任务流水、一次性 diff、未脱敏的 Token / 密钥 / 隐私、只在本仓库成立的临时信息（应放仓库文档或 `meta_data`）。
+- **入口**：NPC 运行时用 `/app/scripts/bailian-memory.py`；开发容器无该脚本时按技能内的 HTTP API 调用。**禁止**把该脚本复制进本仓库（属 SuperNPC 运行时，复制会造成版本分叉）。
+
 ## CI 概览
 
 - `.github/workflows/coverage.yml`：push/PR 到 `main` 时在 Python 3.12/3.13/3.14 上跑测试，`--source=src` 统计覆盖率，仅 3.12 上报 Codecov（`codecov.yml`，项目/补丁门禁均为 informational）。
