@@ -62,11 +62,16 @@ curl -sS -X POST "$BASE/add" \
   -d "{\"user_id\":\"$USER_ID\",\"memory_library_id\":\"$LIB\",\"custom_content\":\"$CONTENT\",\"meta_data\":{\"repo_slug\":\"$REPO_SLUG\",\"repo_scope\":\"$REPO_SCOPE\",\"user_identity\":\"$USER_ID\"}}"
 ```
 
-### 列出
+### 列出 / 审计
 
 ```bash
-curl -sS "$BASE/memory_nodes?user_id=$USER_ID&memory_library_id=$LIB&page_size=20&page_num=1" -H "$AUTH"
+# 响应含 total / page_num / page_size；page_size 最大 100
+curl -sS "$BASE/memory_nodes?user_id=$USER_ID&memory_library_id=$LIB&page_size=100&page_num=1" -H "$AUTH"
 ```
+
+- **确认写入**：`add` 返回 `memory_nodes[].event=ADD` 与 `memory_node_id`；检索索引可能有延迟，刚写入的内容暂时搜不到属正常，用 `list` 核对节点是否存在。
+- **定期审计**：分页拉全量，按 `meta_data.repo_slug` 过滤出本仓库条目；与现状冲突的用 `update` 修正，不要重复 `add`。
+- **手工 API 必须自带元数据**：`repo_slug` / `repo_scope` / `user_identity` 只有运行时脚本会自动注入，直接调 API 时要自己传，否则后续无法按仓库追溯。
 
 ### 更新 / 删除
 
