@@ -114,4 +114,7 @@ main:
             - docker
           stages:
             - name: 生成架构图并更新评论
+              # 可视化属增强能力：模型偶发输出不符合 schema（INVALID_DOCUMENT）时
+              # 不应阻断合并；单元测试仍是 PR 的强制门禁。
+              allowFailure: true
               image: docker.cnb.cool/xmzzuzhi/github/pr-lens/pr-lens:0.0.3
