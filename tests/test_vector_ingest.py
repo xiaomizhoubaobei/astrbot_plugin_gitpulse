@@ -27,6 +27,8 @@ def _options(**overrides):
         "key_prefix": "cnb",
         "kind": "knowledge",
         "tags": [],
+        "repo": "XMZZUZHI/Astrbot/astrbot_plugin_github_webhook",
+        "group": "Astrbot",
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -161,14 +163,17 @@ def test_chunks_from_jsonl_supports_text_content_and_custom_key(tmp_path):
         encoding="utf-8",
     )
 
+    repo = "XMZZUZHI/Astrbot/astrbot_plugin_github_webhook"
+    repo_prefix = vector_ingest._repo_key_prefix("cnb", repo)
     chunks = vector_ingest._chunks_from_jsonl(path, _options())
 
     assert [chunk.text for chunk in chunks] == ["内容一", "内容二"]
     assert chunks[0].metadata["repo"] == "owner/repo"
+    assert chunks[0].metadata["group"] == "Astrbot"
     assert chunks[0].metadata["chunk"] == 0
     assert chunks[0].metadata["total"] == 2
-    assert chunks[0].key.startswith("cnb:")
-    assert chunks[1].key == "custom-key"
+    assert chunks[0].key.startswith(f"{repo_prefix}:")
+    assert chunks[1].key == f"{repo_prefix}:custom-key"
 
 
 def test_chunks_from_text_sets_title_and_tags(tmp_path):
@@ -182,17 +187,55 @@ def test_chunks_from_text_sets_title_and_tags(tmp_path):
     assert chunks[0].metadata["title"] == "标题"
     assert chunks[0].metadata["tags"] == ["cnb", "gpg"]
     assert chunks[0].metadata["kind"] == "knowledge"
+    assert chunks[0].metadata["repo"] == _options().repo
+    assert chunks[0].metadata["group"] == "Astrbot"
     assert chunks[0].metadata["source"].endswith("doc.md")
 
 
-def test_default_key_is_stable_and_index_sensitive():
-    """同一来源同一序号的 key 必须稳定，不同序号不冲突."""
-    first = vector_ingest._default_key("cnb", "docs/a.md", 0)
-    second = vector_ingest._default_key("cnb", "docs/a.md", 0)
-    other = vector_ingest._default_key("cnb", "docs/a.md", 1)
+def test_default_key_is_stable_and_scope_sensitive():
+    """同一仓库/来源/序号稳定；不同序号或不同仓库不冲突."""
+    repo = "XMZZUZHI/Astrbot/astrbot_plugin_github_webhook"
+    first = vector_ingest._default_key("cnb", repo, "docs/a.md", 0)
+    second = vector_ingest._default_key("cnb", repo, "docs/a.md", 0)
+    other = vector_ingest._default_key("cnb", repo, "docs/a.md", 1)
+    other_repo = vector_ingest._default_key("cnb", "XMZZUZHI/market", "docs/a.md", 0)
 
     assert first == second
     assert first != other
+    assert first != other_repo
+
+
+@pytest.mark.parametrize(
+    ("remote", "expected"),
+    [
+        (
+            "https://cnb.cool/XMZZUZHI/Astrbot/astrbot_plugin_github_webhook.git",
+            "XMZZUZHI/Astrbot/astrbot_plugin_github_webhook",
+        ),
+        ("git@github.com:owner/repo.git", "owner/repo"),
+        ("ssh://git@github.com/owner/repo.git", "owner/repo"),
+        ("", None),
+        ("https://github.com/owner", None),
+    ],
+)
+def test_parse_repo_from_remote(remote, expected):
+    """应从 https / ssh / scp 形式的 origin URL 解析仓库标识."""
+    assert vector_ingest.parse_repo_from_remote(remote) == expected
+
+
+@pytest.mark.parametrize("repo", ["../evil", "owner", "owner/repo/../x", "a b/c"])
+def test_normalize_repo_rejects_invalid(repo):
+    """非法仓库标识必须被拒绝，避免进入 metadata/key."""
+    assert vector_ingest.normalize_repo(repo) is None
+
+
+def test_repo_group_for_cnb_and_github_paths():
+    """CNB 三级路径取第二段，GitHub 两级路径取 owner."""
+    assert (
+        vector_ingest.repo_group("XMZZUZHI/Astrbot/astrbot_plugin_github_webhook")
+        == "Astrbot"
+    )
+    assert vector_ingest.repo_group("owner/repo") == "owner"
 
 
 def test_dry_run_does_not_require_credentials(monkeypatch, tmp_path, capsys):
@@ -209,7 +252,14 @@ def test_dry_run_does_not_require_credentials(monkeypatch, tmp_path, capsys):
     path = tmp_path / "note.md"
     path.write_text("# 标题\n\n正文内容。", encoding="utf-8")
 
-    exit_code = vector_ingest.main(["--dry-run", str(path)])
+    exit_code = vector_ingest.main(
+        [
+            "--dry-run",
+            "--repo",
+            "XMZZUZHI/Astrbot/astrbot_plugin_github_webhook",
+            str(path),
+        ]
+    )
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -253,7 +303,15 @@ def test_invalid_batch_or_dimension_returns_clean_error(
     path = tmp_path / "note.md"
     path.write_text("正文内容。", encoding="utf-8")
 
-    exit_code = vector_ingest.main(["--dry-run", *flags, str(path)])
+    exit_code = vector_ingest.main(
+        [
+            "--dry-run",
+            "--repo",
+            "XMZZUZHI/Astrbot/astrbot_plugin_github_webhook",
+            *flags,
+            str(path),
+        ]
+    )
 
     assert exit_code == 2
     assert message in capsys.readouterr().err
@@ -269,7 +327,7 @@ def test_http_request_rejects_non_https():
 
 
 def test_query_vectors_builds_expected_payload(monkeypatch):
-    """检索请求应使用 queryVectors 且返回 distance/metadata."""
+    """指定 repo 时检索请求必须带 metadata filter，实现仓库级隔离."""
     captured = {}
 
     def fake_request(config, operation, body):
@@ -278,7 +336,13 @@ def test_query_vectors_builds_expected_payload(monkeypatch):
 
     monkeypatch.setattr(vector_ingest, "_oss_vector_request", fake_request)
 
-    result = vector_ingest.query_vectors(_oss_config(), "idx", [0.1, 0.2], 2)
+    result = vector_ingest.query_vectors(
+        _oss_config(),
+        "idx",
+        [0.1, 0.2],
+        2,
+        repo="XMZZUZHI/Astrbot/astrbot_plugin_github_webhook",
+    )
 
     assert captured["operation"] == "queryVectors"
     assert captured["body"] == {
@@ -287,8 +351,24 @@ def test_query_vectors_builds_expected_payload(monkeypatch):
         "topK": 2,
         "returnDistance": True,
         "returnMetadata": True,
+        "filter": {"repo": {"$eq": "XMZZUZHI/Astrbot/astrbot_plugin_github_webhook"}},
     }
     assert result[0]["key"] == "k1"
+
+
+def test_query_vectors_without_repo_omits_filter(monkeypatch):
+    """跨仓库检索时不带 repo filter."""
+    captured = {}
+
+    def fake_request(config, operation, body):
+        captured["body"] = body
+        return {"vectors": []}
+
+    monkeypatch.setattr(vector_ingest, "_oss_vector_request", fake_request)
+
+    vector_ingest.query_vectors(_oss_config(), "idx", [0.1], 1)
+
+    assert "filter" not in captured["body"]
 
 
 @pytest.mark.parametrize("top_k", [0, -1, 501])
@@ -296,6 +376,24 @@ def test_query_vectors_rejects_invalid_top_k(top_k):
     """top_k 超出 1~500 时应给出清理后的错误."""
     with pytest.raises(vector_ingest.IngestError, match="top_k"):
         vector_ingest.query_vectors(_oss_config(), "idx", [0.1], top_k)
+
+
+def test_run_query_all_repos_passes_no_filter(monkeypatch):
+    """--all-repos 模式下 run_query 不应传 repo filter."""
+    captured = {}
+
+    monkeypatch.setattr(vector_ingest, "embed_texts", lambda options, texts: [[0.1]])
+
+    def fake_query(config, index, vector, top_k, repo=None):
+        captured["repo"] = repo
+        return []
+
+    monkeypatch.setattr(vector_ingest, "query_vectors", fake_query)
+    options = SimpleNamespace(oss=_oss_config(), repo="owner/repo")
+
+    vector_ingest.run_query(options, "q", 3, all_repos=True)
+
+    assert captured["repo"] is None
 
 
 def test_main_query_mode_outputs_results(monkeypatch, capsys):
@@ -315,21 +413,74 @@ def test_main_query_mode_outputs_results(monkeypatch, capsys):
     monkeypatch.setattr(
         vector_ingest,
         "query_vectors",
-        lambda config, index, vector, top_k: [
+        lambda config, index, vector, top_k, repo=None: [
             {
                 "key": "k1",
                 "distance": 0.01,
-                "metadata": {"source": "docs/a.md", "kind": "pitfall"},
+                "metadata": {
+                    "repo": "XMZZUZHI/Astrbot/astrbot_plugin_github_webhook",
+                    "source": "docs/a.md",
+                    "kind": "pitfall",
+                },
             }
         ],
     )
 
-    exit_code = vector_ingest.main(["--query", "GPG unknown_key 怎么修"])
+    exit_code = vector_ingest.main(
+        [
+            "--query",
+            "GPG unknown_key 怎么修",
+            "--repo",
+            "XMZZUZHI/Astrbot/astrbot_plugin_github_webhook",
+        ]
+    )
 
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "k1" in captured.out
     assert "docs/a.md" in captured.out
+
+
+def test_query_repo_and_all_repos_conflict(monkeypatch, capsys):
+    """--repo 与 --all-repos 不能同时使用."""
+    for name, value in (
+        ("ALIBABA_CLOUD_ACCESS_KEY_ID", "ak"),
+        ("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "sk"),
+        ("DASHSCOPE_API_KEY", "dk"),
+        ("OSS_VECTOR_ACCOUNT_ID", "123"),
+    ):
+        monkeypatch.setenv(name, value)
+
+    exit_code = vector_ingest.main(
+        ["--query", "x", "--repo", "owner/repo", "--all-repos"]
+    )
+
+    assert exit_code == 2
+    assert "不能同时使用" in capsys.readouterr().err
+
+
+def test_main_all_repos_query_without_repo(monkeypatch, capsys):
+    """--all-repos 检索不应因自动识别仓库而误报冲突."""
+    for name, value in (
+        ("ALIBABA_CLOUD_ACCESS_KEY_ID", "ak"),
+        ("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "sk"),
+        ("DASHSCOPE_API_KEY", "dk"),
+        ("OSS_VECTOR_ACCOUNT_ID", "123"),
+    ):
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(vector_ingest, "embed_texts", lambda options, texts: [[0.1]])
+    monkeypatch.setattr(
+        vector_ingest,
+        "query_vectors",
+        lambda config, index, vector, top_k, repo=None: [
+            {"key": "k1", "distance": 0.1, "metadata": {}}
+        ],
+    )
+
+    exit_code = vector_ingest.main(["--query", "x", "--all-repos"])
+
+    assert exit_code == 0
+    assert "k1" in capsys.readouterr().out
 
 
 def test_query_mode_rejects_inputs_and_dry_run(capsys):

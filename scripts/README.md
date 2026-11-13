@@ -47,10 +47,36 @@ export OSS_VECTOR_ACCOUNT_ID="<阿里云账号 ID>"           # 也可用 --acco
   docs/
 ```
 
+### 仓库隔离
+
+每个仓库的知识通过 `repo` metadata 隔离，检索时由服务端过滤，不会召回其他仓库的内容：
+
+- `--repo` 未传时自动从 `git remote get-url origin` 识别；
+- 写入时主键为 `cnb:<仓库哈希>:<来源哈希>:<切片号>`，不同仓库的同名文件不会互相覆盖；
+- 元数据写入 `repo` 与 `group`（CNB 三级路径取第二段，GitHub 两级路径取 owner）；
+- 检索默认只查当前仓库，`--all-repos` 可跨仓库检索（仅检索模式）。
+
+```bash
+# 显式指定仓库（自动识别失败时使用）
+./scripts/vector_ingest.py \
+  --repo XMZZUZHI/Astrbot/astrbot_plugin_github_webhook docs/
+
+# 只检索当前仓库
+./scripts/vector_ingest.py \
+  --repo XMZZUZHI/Astrbot/astrbot_plugin_github_webhook \
+  --query "GPG unknown_key" --top-k 5
+
+# 跨仓库检索
+./scripts/vector_ingest.py --all-repos --query "GPG unknown_key" --top-k 5
+```
+
+> 组织仓库数量已超过 OSS 单桶 100 个索引的上限，因此不要按仓库建索引；
+> 统一使用 metadata 隔离，未来需要物理拆分时可按仓库哈希迁移。
+
 ### 检索
 
 ```bash
-# 语义检索，输出 key、distance 与 source/title/kind 等元数据
+# 语义检索，输出 key、distance 与 repo/source/title/kind 等元数据
 ./scripts/vector_ingest.py --query "GPG 签名 unknown_key 怎么修" --top-k 5
 
 # 机器可读输出
@@ -73,9 +99,10 @@ export OSS_VECTOR_ACCOUNT_ID="<阿里云账号 ID>"           # 也可用 --acco
 
 ### 主键与幂等
 
-文本文件的向量主键为 `cnb:<来源路径哈希>:<切片序号>`。对同一来源重复导入会
-**覆盖**相同序号的向量；若文件变短导致切片数减少，旧的多余切片不会自动删除，
-需要按主键另行清理。JSONL 可通过 `key` 字段自定义主键。
+文本文件的向量主键为 `cnb:<仓库哈希>:<来源路径哈希>:<切片序号>`。对同一仓库、
+同一来源重复导入会**覆盖**相同序号的向量；若文件变短导致切片数减少，旧的多余
+切片不会自动删除，需要按主键另行清理。JSONL 的 `key` 字段会被自动加上仓库
+命名空间前缀，避免跨仓库覆盖。
 
 ### 限制
 

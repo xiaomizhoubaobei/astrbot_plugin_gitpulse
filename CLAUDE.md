@@ -159,12 +159,13 @@ curl -sS -X PATCH \
 本组织使用阿里云上海 OSS 向量 Bucket 沉淀跨仓库可复用的结论与踩坑记录，替代原百炼共享记忆库。Claude Code 必须主动读写，不等用户提醒。
 
 - **存储**：向量 Bucket `cnb-knowledge-base`，索引 `cnbknowledge`（`cn-shanghai`，1024 维 float32，cosine）。
+- **仓库隔离**：每条向量写入 `repo` / `group` 元数据，检索默认只查当前仓库；`--repo` 缺省时从 `origin` 自动识别，`--all-repos` 仅用于明确的跨仓库检索；写入主键含仓库哈希，不同仓库同名文件不会互相覆盖。
 - **开场检索**：非一次性任务开始前先检索相关结论：
   `python scripts/vector_ingest.py --query "<任务关键词或报错原文>" --top-k 5`
   命中优先复用；返回空属正常，不重试。
 - **收尾沉淀**：仅当产出跨仓库可复用结论（平台约定、踩坑解法、字段口径）时写入：
   `python scripts/vector_ingest.py --kind pitfall --tag cnb <文件或目录>`
-  写清「结论 + 适用场景」；同一来源重复写入会覆盖同序号切片，先检索查重，避免重复内容。
+  写清「结论 + 适用场景」；写入必须落在具体仓库（不能使用 `--all-repos`），同一来源重复写入会覆盖同序号切片，先检索查重。
 - **不写入**：逐次任务流水、一次性 diff、未脱敏的 Token / 密钥 / 隐私、只在本仓库成立的临时信息（应放仓库文档）。
 - **环境变量**：`DASHSCOPE_API_KEY`、`ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`、`OSS_VECTOR_ACCOUNT_ID`。
 - **稳定性**：向量写入后索引更新有短暂延迟（约数十秒），刚写入的内容可能暂时检索不到；知识库不可用只告警，不阻断主流程。

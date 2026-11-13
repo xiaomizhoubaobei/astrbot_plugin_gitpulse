@@ -19,6 +19,7 @@ import hmac
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -48,6 +49,8 @@ RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 SUPPORTED_SUFFIXES = frozenset({".md", ".markdown", ".txt", ".jsonl"})
 # 切片时优先在这些边界处断开，避免把句子/段落从中间截断。
 _SENTENCE_BOUNDARIES = ("\n\n", "\n", "。", "！", "？", ". ", "! ", "? ")
+# 仓库标识：至少两段（owner/repo 或 org/group/repo），只允许安全字符。
+_REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+$")
 
 
 class IngestError(RuntimeError):
@@ -85,6 +88,8 @@ class IngestOptions:
 
     oss: OssConfig
     dashscope_api_key: str
+    repo: str = ""
+    group: str = ""
     model: str = DEFAULT_MODEL
     dimension: int = DEFAULT_DIMENSION
     chunk_size: int = DEFAULT_CHUNK_SIZE
@@ -111,6 +116,64 @@ def _uri_encode(value: str, keep_slash: bool = False) -> str:
     """按 OSS V4 规则做 URI 编码（保留 ``/`` 时用于路径）."""
     safe = "/-_.~" if keep_slash else "-_.~"
     return urllib.parse.quote(value, safe=safe)
+
+
+def normalize_repo(repo: str) -> str | None:
+    """校验并归一化仓库标识；非法时返回 None.
+
+    支持 ``owner/repo`` 与 CNB 的 ``org/group/repo`` 形式，拒绝空段与
+    ``.`` / ``..`` 路径段，避免污染签名与 metadata。
+    """
+    value = repo.strip().strip("/")
+    if not _REPO_PATTERN.fullmatch(value):
+        return None
+    if any(segment in {".", ".."} for segment in value.split("/")):
+        return None
+    return value
+
+
+def repo_group(repo: str) -> str:
+    """从仓库标识推导分组：CNB 取第二段，GitHub 风格取 owner."""
+    parts = repo.split("/")
+    return parts[1] if len(parts) >= 3 else parts[0]
+
+
+def repo_hash(repo: str) -> str:
+    """返回仓库标识的稳定短哈希，用于主键命名空间隔离."""
+    return hashlib.sha256(repo.lower().encode("utf-8")).hexdigest()[:16]
+
+
+def parse_repo_from_remote(url: str) -> str | None:
+    """从 git remote URL 解析仓库标识，支持 https / ssh / scp 形式."""
+    value = url.strip()
+    if not value:
+        return None
+    if "://" not in value and ":" in value:
+        # scp 形式：git@host:owner/repo.git
+        _, _, path = value.partition(":")
+    else:
+        path = urllib.parse.urlparse(value).path
+    path = path.strip().strip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    return normalize_repo(path)
+
+
+def detect_repo() -> str | None:
+    """从当前仓库的 origin remote 自动识别仓库标识."""
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return parse_repo_from_remote(result.stdout)
 
 
 def build_canonical_request(
@@ -300,23 +363,31 @@ def put_vectors(
 
 
 def query_vectors(
-    config: OssConfig, index: str, vector: Sequence[float], top_k: int
+    config: OssConfig,
+    index: str,
+    vector: Sequence[float],
+    top_k: int,
+    repo: str | None = None,
 ) -> list[dict[str, Any]]:
-    """调用 ``QueryVectors`` 做近似最近邻检索，返回匹配向量列表."""
+    """调用 ``QueryVectors`` 做近似最近邻检索，返回匹配向量列表.
+
+    传入 ``repo`` 时使用服务端 metadata filter 只召回该仓库的向量，
+    实现仓库级检索隔离；``repo=None`` 表示跨仓库检索。
+    """
     if not 0 < top_k <= MAX_TOP_K:
         raise IngestError(f"top_k 必须在 1~{MAX_TOP_K} 之间")
 
-    response = _oss_vector_request(
-        config,
-        "queryVectors",
-        {
-            "indexName": index,
-            "queryVector": {"float32": list(vector)},
-            "topK": top_k,
-            "returnDistance": True,
-            "returnMetadata": True,
-        },
-    )
+    body: dict[str, Any] = {
+        "indexName": index,
+        "queryVector": {"float32": list(vector)},
+        "topK": top_k,
+        "returnDistance": True,
+        "returnMetadata": True,
+    }
+    if repo:
+        body["filter"] = {"repo": {"$eq": repo}}
+
+    response = _oss_vector_request(config, "queryVectors", body)
     vectors = response.get("vectors", [])
     if not isinstance(vectors, list):
         raise IngestError("QueryVectors 响应缺少 vectors 列表")
@@ -445,16 +516,25 @@ def _source_label(path: Path) -> str:
         return path.as_posix()
 
 
-def _default_key(prefix: str, source: str, index: int) -> str:
-    """生成稳定主键：同一来源的第 N 片始终覆盖同一向量."""
-    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
-    base = f"{digest}:{index:04d}"
-    return f"{prefix}:{base}" if prefix else base
+def _repo_key_prefix(prefix: str, repo: str) -> str:
+    """返回仓库级主键命名空间：不同仓库的同名文件不会互相覆盖."""
+    digest = repo_hash(repo)
+    return f"{prefix}:{digest}" if prefix else digest
+
+
+def _default_key(prefix: str, repo: str, source: str, index: int) -> str:
+    """生成稳定主键：同一仓库、同一来源的第 N 片始终覆盖同一向量."""
+    source_digest = hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
+    return f"{_repo_key_prefix(prefix, repo)}:{source_digest}:{index:04d}"
 
 
 def _base_metadata(options: IngestOptions, source: str) -> dict[str, Any]:
-    """构造所有切片共享的元数据."""
+    """构造所有切片共享的元数据（含仓库与分组，用于检索隔离）."""
     metadata: dict[str, Any] = {"source": source, "kind": options.kind}
+    if options.repo:
+        metadata["repo"] = options.repo
+    if options.group:
+        metadata["group"] = options.group
     if options.tags:
         metadata["tags"] = list(options.tags)
     return metadata
@@ -477,7 +557,7 @@ def _chunks_from_text(path: Path, options: IngestOptions) -> list[Chunk]:
             metadata["title"] = title
         chunks.append(
             Chunk(
-                key=_default_key(options.key_prefix, source, index),
+                key=_default_key(options.key_prefix, options.repo, source, index),
                 text=part,
                 metadata=metadata,
             )
@@ -516,8 +596,14 @@ def _chunks_from_jsonl(path: Path, options: IngestOptions) -> list[Chunk]:
         metadata.update({"chunk": index, "total": len(records)})
         key = record.get("key")
         if not isinstance(key, str) or not key.strip():
-            key = _default_key(options.key_prefix, source, index)
-        chunks.append(Chunk(key=key.strip(), text=text, metadata=metadata))
+            key = _default_key(options.key_prefix, options.repo, source, index)
+        else:
+            # 自定义 key 也强制落在仓库命名空间内，避免跨仓库覆盖。
+            repo_prefix = _repo_key_prefix(options.key_prefix, options.repo)
+            key = key.strip()
+            if not key.startswith(f"{repo_prefix}:"):
+                key = f"{repo_prefix}:{key}"
+        chunks.append(Chunk(key=key, text=text, metadata=metadata))
     return chunks
 
 
@@ -584,11 +670,19 @@ def run_ingest(inputs: Sequence[str], options: IngestOptions) -> tuple[int, int]
 
 
 def run_query(
-    options: IngestOptions, query: str, top_k: int, as_json: bool = False
+    options: IngestOptions,
+    query: str,
+    top_k: int,
+    as_json: bool = False,
+    all_repos: bool = False,
 ) -> int:
-    """检索知识库并输出结果，返回命中条数."""
+    """检索知识库并输出结果，返回命中条数.
+
+    默认只检索当前仓库；``all_repos=True`` 时跨仓库检索。
+    """
     embedding = embed_texts(options, [query])[0]
-    results = query_vectors(options.oss, options.oss.index, embedding, top_k)
+    repo = None if all_repos else (options.repo or None)
+    results = query_vectors(options.oss, options.oss.index, embedding, top_k, repo)
 
     if as_json:
         print(json.dumps(results, ensure_ascii=False, indent=2))
@@ -598,12 +692,14 @@ def run_query(
         print("未找到匹配结果", file=sys.stderr)
         return 0
 
+    scope = "all repos" if all_repos else (options.repo or "unknown")
+    print(f"scope: {scope}", file=sys.stderr)
     for index, item in enumerate(results, start=1):
         distance = item.get("distance")
         print(f"{index}. {item.get('key', '')}  distance={distance}")
         metadata = item.get("metadata")
         if isinstance(metadata, dict):
-            for field_name in ("source", "title", "kind", "chunk", "tags"):
+            for field_name in ("repo", "source", "title", "kind", "chunk", "tags"):
                 if field_name in metadata:
                     print(f"   {field_name}: {metadata[field_name]}")
     return len(results)
@@ -657,6 +753,24 @@ def _build_options(args: argparse.Namespace) -> IngestOptions:
     if args.retries < 0:
         raise IngestError("retries 不能为负数")
 
+    if args.all_repos:
+        if args.repo:
+            raise IngestError("--all-repos 与 --repo 不能同时使用")
+        if not args.query:
+            raise IngestError("--all-repos 仅用于检索，写入必须指定仓库")
+        repo = None
+    elif args.repo:
+        repo = normalize_repo(args.repo)
+        if not repo:
+            raise IngestError(f"--repo 非法: {args.repo!r}")
+    else:
+        repo = detect_repo()
+        if not repo:
+            raise IngestError(
+                "无法确定仓库，请使用 --repo 指定（检索时可改用 --all-repos）"
+            )
+
+    group = repo_group(repo) if repo else ""
     oss = OssConfig(
         bucket=args.bucket,
         index=args.index,
@@ -671,6 +785,8 @@ def _build_options(args: argparse.Namespace) -> IngestOptions:
     return IngestOptions(
         oss=oss,
         dashscope_api_key=_env("DASHSCOPE_API_KEY"),
+        repo=repo or "",
+        group=group,
         model=args.model,
         dimension=args.dimension,
         chunk_size=args.chunk_size,
@@ -690,7 +806,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "将知识文档切片、调用百炼 text-embedding-v4 生成向量，"
-            "并通过 OSS V4 签名 API 写入/检索向量 Bucket（无需 SDK/ossutil）。"
+            "并通过 OSS V4 签名 API 按仓库隔离地写入/检索向量 Bucket"
+            "（无需 SDK/ossutil）。"
         )
     )
     parser.add_argument(
@@ -699,6 +816,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--query", default="", help="检索文本；提供后进入只读检索模式")
     parser.add_argument("--top-k", type=int, default=5, help="检索返回条数（上限 500）")
     parser.add_argument("--json", action="store_true", help="检索结果以 JSON 输出")
+    parser.add_argument(
+        "--repo",
+        default="",
+        help="仓库标识（owner/repo 或 org/group/repo），默认从 origin 自动识别",
+    )
+    parser.add_argument(
+        "--all-repos",
+        action="store_true",
+        help="跨仓库检索；写入模式必须指定具体仓库",
+    )
     parser.add_argument(
         "--bucket",
         default=_env("OSS_VECTOR_BUCKET") or "cnb-knowledge-base",
@@ -788,7 +915,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         options = _build_options(args)
         if args.query:
-            count = run_query(options, args.query, args.top_k, args.json)
+            count = run_query(
+                options, args.query, args.top_k, args.json, args.all_repos
+            )
             if not args.quiet and not args.json:
                 print(f"查询完成：返回 {count} 条结果", file=sys.stderr)
             return 0
