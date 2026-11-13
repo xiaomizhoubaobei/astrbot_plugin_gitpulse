@@ -42,7 +42,7 @@ def test_uri_encode_encodes_arn_but_keeps_slashes():
 def test_build_canonical_request_matches_oss_v4_layout():
     """规范请求必须包含 ARN 路径、裸查询串与空的附加头行."""
     headers = {
-        "content-md5": "abc==",
+        "content-md5": "abc==",  # DevSkim: ignore DS126858
         "content-type": "application/json",
         "x-oss-content-sha256": "UNSIGNED-PAYLOAD",
         "x-oss-date": "20260101T000000Z",
@@ -59,7 +59,7 @@ def test_build_canonical_request_matches_oss_v4_layout():
         "POST\n"
         "/acs%3Aossvector%3Acn-shanghai%3A123%3Ademo/\n"
         "putVectors\n"
-        "content-md5:abc==\n"
+        "content-md5:abc==\n"  # DevSkim: ignore DS126858
         "content-type:application/json\n"
         "x-oss-content-sha256:UNSIGNED-PAYLOAD\n"
         "x-oss-date:20260101T000000Z\n"
@@ -72,7 +72,7 @@ def test_build_canonical_request_matches_oss_v4_layout():
 def test_sign_v4_returns_expected_authorization():
     """固定输入下的签名应保持稳定（防止重构破坏 V4 算法）."""
     headers = {
-        "content-md5": "abc==",
+        "content-md5": "abc==",  # DevSkim: ignore DS126858
         "content-type": "application/json",
         "x-oss-content-sha256": "UNSIGNED-PAYLOAD",
         "x-oss-date": "20260101T000000Z",
@@ -92,7 +92,8 @@ def test_sign_v4_returns_expected_authorization():
     assert authorization == (
         "OSS4-HMAC-SHA256 Credential=AKID/20260101/cn-shanghai/oss/"
         "aliyun_v4_request,Signature="
-        "7fcd2c6bcabc00d6a1888f9b48920aff76481a8b89f2701f6ffb8eba1bfa1ece"
+        "7fcd2c6bcabc00d6a1888f9b48920aff"  # DevSkim: ignore DS173237
+        "76481a8b89f2701f6ffb8eba1bfa1ece"  # DevSkim: ignore DS173237
     )
 
 
@@ -216,3 +217,26 @@ def test_real_run_reports_missing_credentials(monkeypatch, tmp_path, capsys):
 
     assert exit_code == 2
     assert "缺少必要配置" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("flags", "message"),
+    [
+        (["--embed-batch-size", "0"], "embed_batch_size"),
+        (["--embed-batch-size", "11"], "embed_batch_size"),
+        (["--vector-batch-size", "0"], "vector_batch_size"),
+        (["--vector-batch-size", "501"], "vector_batch_size"),
+        (["--dimension", "0"], "dimension"),
+    ],
+)
+def test_invalid_batch_or_dimension_returns_clean_error(
+    tmp_path, capsys, flags, message
+):
+    """批次/维度非法时应返回 IngestError 而不是 ValueError 或死循环."""
+    path = tmp_path / "note.md"
+    path.write_text("正文内容。", encoding="utf-8")
+
+    exit_code = vector_ingest.main(["--dry-run", *flags, str(path)])
+
+    assert exit_code == 2
+    assert message in capsys.readouterr().err

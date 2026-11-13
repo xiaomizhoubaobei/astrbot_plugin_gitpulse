@@ -230,14 +230,14 @@ def put_vectors(
         ensure_ascii=False,
         separators=(",", ":"),
     ).encode("utf-8")
-    # OSS 要求 Content-MD5；这里仅做传输校验，不用于安全目的。
-    content_md5 = base64.b64encode(
-        hashlib.md5(body, usedforsecurity=False).digest()
+    # OSS 协议要求 Content-MD5，不能替换为更安全的算法；仅用于传输校验。
+    content_md5 = base64.b64encode(  # DevSkim: ignore DS126858
+        hashlib.md5(body, usedforsecurity=False).digest()  # DevSkim: ignore DS126858
     ).decode("ascii")
     timestamp = _now_timestamp()
     canonical_uri = f"/{_uri_encode(config.bucket_arn, keep_slash=True)}/"
     headers = {
-        "content-md5": content_md5,
+        "content-md5": content_md5,  # DevSkim: ignore DS126858
         "content-type": "application/json",
         "x-oss-content-sha256": "UNSIGNED-PAYLOAD",
         "x-oss-date": timestamp,
@@ -257,7 +257,7 @@ def put_vectors(
         data=body,
         method="POST",
         headers={
-            "Content-MD5": content_md5,
+            "Content-MD5": content_md5,  # DevSkim: ignore DS126858
             "Content-Type": "application/json",
             "x-oss-content-sha256": "UNSIGNED-PAYLOAD",
             "x-oss-date": timestamp,
@@ -561,14 +561,20 @@ def _build_options(args: argparse.Namespace) -> IngestOptions:
         if missing:
             raise IngestError("缺少必要配置: " + ", ".join(missing))
 
-    if not args.dry_run and args.embed_batch_size > MAX_EMBED_BATCH_SIZE:
-        raise IngestError(f"embed_batch_size 最大为 {MAX_EMBED_BATCH_SIZE}")
-    if not args.dry_run and args.vector_batch_size > MAX_VECTOR_BATCH_SIZE:
-        raise IngestError(f"vector_batch_size 最大为 {MAX_VECTOR_BATCH_SIZE}")
+    if not 0 < args.embed_batch_size <= MAX_EMBED_BATCH_SIZE:
+        raise IngestError(f"embed_batch_size 必须在 1~{MAX_EMBED_BATCH_SIZE} 之间")
+    if not 0 < args.vector_batch_size <= MAX_VECTOR_BATCH_SIZE:
+        raise IngestError(f"vector_batch_size 必须在 1~{MAX_VECTOR_BATCH_SIZE} 之间")
     if args.chunk_size <= 0:
         raise IngestError("chunk_size 必须大于 0")
     if args.chunk_overlap < 0 or args.chunk_overlap >= args.chunk_size:
         raise IngestError("chunk_overlap 必须满足 0 <= overlap < chunk_size")
+    if args.dimension <= 0:
+        raise IngestError("dimension 必须大于 0")
+    if args.timeout <= 0:
+        raise IngestError("timeout 必须大于 0")
+    if args.retries < 0:
+        raise IngestError("retries 不能为负数")
 
     oss = OssConfig(
         bucket=args.bucket,
