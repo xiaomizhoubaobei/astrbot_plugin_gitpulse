@@ -32,6 +32,21 @@ def _options(**overrides):
     return SimpleNamespace(**values)
 
 
+def _oss_config(**overrides):
+    """构造 OSS 向量连接配置."""
+    values = {
+        "bucket": "cnb-knowledge-base",
+        "index": "cnbknowledge",
+        "region": "cn-shanghai",
+        "account_id": "123",
+        "endpoint": "cn-shanghai.oss-vectors.aliyuncs.com",
+        "access_key_id": "ak",
+        "access_key_secret": "sk",
+    }
+    values.update(overrides)
+    return vector_ingest.OssConfig(**values)
+
+
 def test_uri_encode_encodes_arn_but_keeps_slashes():
     """ARN 中的冒号必须编码，路径分隔符保留."""
     encoded = vector_ingest._uri_encode(
@@ -251,3 +266,82 @@ def test_http_request_rejects_non_https():
 
     with pytest.raises(vector_ingest.IngestError, match="仅允许 https"):
         vector_ingest._http_request(request, timeout=1, retries=0)
+
+
+def test_query_vectors_builds_expected_payload(monkeypatch):
+    """检索请求应使用 queryVectors 且返回 distance/metadata."""
+    captured = {}
+
+    def fake_request(config, operation, body):
+        captured.update(operation=operation, body=body)
+        return {"vectors": [{"key": "k1", "distance": 0.1, "metadata": {}}]}
+
+    monkeypatch.setattr(vector_ingest, "_oss_vector_request", fake_request)
+
+    result = vector_ingest.query_vectors(_oss_config(), "idx", [0.1, 0.2], 2)
+
+    assert captured["operation"] == "queryVectors"
+    assert captured["body"] == {
+        "indexName": "idx",
+        "queryVector": {"float32": [0.1, 0.2]},
+        "topK": 2,
+        "returnDistance": True,
+        "returnMetadata": True,
+    }
+    assert result[0]["key"] == "k1"
+
+
+@pytest.mark.parametrize("top_k", [0, -1, 501])
+def test_query_vectors_rejects_invalid_top_k(top_k):
+    """top_k 超出 1~500 时应给出清理后的错误."""
+    with pytest.raises(vector_ingest.IngestError, match="top_k"):
+        vector_ingest.query_vectors(_oss_config(), "idx", [0.1], top_k)
+
+
+def test_main_query_mode_outputs_results(monkeypatch, capsys):
+    """--query 模式应完成嵌入、检索并按可读格式输出."""
+    for name, value in (
+        ("ALIBABA_CLOUD_ACCESS_KEY_ID", "ak"),
+        ("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "sk"),
+        ("DASHSCOPE_API_KEY", "dk"),
+        ("OSS_VECTOR_ACCOUNT_ID", "123"),
+    ):
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(
+        vector_ingest,
+        "embed_texts",
+        lambda options, texts: [[0.1, 0.2]],
+    )
+    monkeypatch.setattr(
+        vector_ingest,
+        "query_vectors",
+        lambda config, index, vector, top_k: [
+            {
+                "key": "k1",
+                "distance": 0.01,
+                "metadata": {"source": "docs/a.md", "kind": "pitfall"},
+            }
+        ],
+    )
+
+    exit_code = vector_ingest.main(["--query", "GPG unknown_key 怎么修"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "k1" in captured.out
+    assert "docs/a.md" in captured.out
+
+
+def test_query_mode_rejects_inputs_and_dry_run(capsys):
+    """--query 与输入文件/--dry-run 互斥，参数错误应返回 2."""
+    assert vector_ingest.main(["--query", "x", "a.md"]) == 2
+    assert "不能同时使用" in capsys.readouterr().err
+
+    assert vector_ingest.main(["--query", "x", "--dry-run"]) == 2
+    assert "不支持 --dry-run" in capsys.readouterr().err
+
+
+def test_main_without_inputs_returns_error(capsys):
+    """既没有输入文件也没有 --query 时应给出明确错误."""
+    assert vector_ingest.main([]) == 2
+    assert "请提供输入文件" in capsys.readouterr().err

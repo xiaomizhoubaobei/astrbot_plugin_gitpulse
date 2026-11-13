@@ -5,7 +5,7 @@
 ## vector_ingest.py
 
 把 Markdown / 文本 / JSONL 知识文档切片，调用百炼 `text-embedding-v4` 生成向量，
-再通过 **OSS V4 签名 API** 写入阿里云 OSS 向量 Bucket。
+再通过 **OSS V4 签名 API** 写入阿里云 OSS 向量 Bucket；也可用 `--query` 做语义检索。
 
 脚本只依赖 Python 标准库：运行镜像未安装 OSS / 百炼 SDK 时也能直接执行，
 V4 签名（`OSS4-HMAC-SHA256`）由脚本内部实现。
@@ -47,6 +47,19 @@ export OSS_VECTOR_ACCOUNT_ID="<阿里云账号 ID>"           # 也可用 --acco
   docs/
 ```
 
+### 检索
+
+```bash
+# 语义检索，输出 key、distance 与 source/title/kind 等元数据
+./scripts/vector_ingest.py --query "GPG 签名 unknown_key 怎么修" --top-k 5
+
+# 机器可读输出
+./scripts/vector_ingest.py --query "端口被占用" --top-k 3 --json
+```
+
+> 向量写入后索引更新有短暂延迟（约数十秒），刚写入的内容可能暂时检索不到。
+> 检索模式与写入模式互斥，不能同时传 `--query` 和输入文件。
+
 ### 输入格式
 
 - `.md` / `.markdown` / `.txt`：按 `--chunk-size` 切片，优先在段落/句子边界断开，
@@ -68,6 +81,7 @@ export OSS_VECTOR_ACCOUNT_ID="<阿里云账号 ID>"           # 也可用 --acco
 
 - 单次嵌入请求最多 10 条文本（脚本会分批，超过上限直接报错）；
 - 单次 `PutVectors` 最多 500 条向量；
+- 单次 `QueryVectors` 的 `--top-k` 范围为 1~500；
 - `text-embedding-v4` 的 `dimension` 必须与索引维度一致（默认 1024）；
 - 网络失败、429/5xx 会按指数退避重试，其余错误直接退出并打印响应体。
 

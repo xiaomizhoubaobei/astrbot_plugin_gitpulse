@@ -43,6 +43,7 @@ DEFAULT_EMBED_BATCH_SIZE = 10
 DEFAULT_VECTOR_BATCH_SIZE = 100
 MAX_EMBED_BATCH_SIZE = 10
 MAX_VECTOR_BATCH_SIZE = 500
+MAX_TOP_K = 500
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 SUPPORTED_SUFFIXES = frozenset({".md", ".markdown", ".txt", ".jsonl"})
 # 切片时优先在这些边界处断开，避免把句子/段落从中间截断。
@@ -223,23 +224,22 @@ def _http_request(
     raise IngestError(last_error or "请求失败")
 
 
-def put_vectors(
-    config: OssConfig, index: str, vectors: Sequence[dict[str, Any]]
-) -> None:
-    """调用 ``PutVectors`` 写入一批向量（单批最多 500 条）."""
-    if not vectors:
-        return
-    if len(vectors) > MAX_VECTOR_BATCH_SIZE:
-        raise IngestError(f"单批向量数 {len(vectors)} 超过上限 {MAX_VECTOR_BATCH_SIZE}")
+def _oss_vector_request(
+    config: OssConfig, operation: str, body: dict[str, Any]
+) -> dict[str, Any]:
+    """调用一个 OSS 向量 API，返回解析后的 JSON 响应.
 
-    body = json.dumps(
-        {"indexName": index, "vectors": list(vectors)},
-        ensure_ascii=False,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    ``operation`` 同时作为裸查询串（如 ``putVectors`` / ``queryVectors``）
+    与签名参数；向量 API 不使用 ``name=value`` 形式。
+    """
+    raw_body = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8"
+    )
     # OSS 协议要求 Content-MD5，不能替换为更安全的算法；仅用于传输校验。
     content_md5 = base64.b64encode(  # DevSkim: ignore DS126858
-        hashlib.md5(body, usedforsecurity=False).digest()  # DevSkim: ignore DS126858
+        hashlib.md5(  # DevSkim: ignore DS126858
+            raw_body, usedforsecurity=False
+        ).digest()
     ).decode("ascii")
     timestamp = _now_timestamp()
     canonical_uri = f"/{_uri_encode(config.bucket_arn, keep_slash=True)}/"
@@ -252,7 +252,7 @@ def put_vectors(
     authorization = sign_v4(
         method="POST",
         canonical_uri=canonical_uri,
-        canonical_query="putVectors",
+        canonical_query=operation,
         headers=headers,
         access_key_id=config.access_key_id,
         access_key_secret=config.access_key_secret,
@@ -260,8 +260,8 @@ def put_vectors(
         timestamp=timestamp,
     )
     request = urllib.request.Request(
-        f"https://{config.host}/?putVectors",
-        data=body,
+        f"https://{config.host}/?{operation}",
+        data=raw_body,
         method="POST",
         headers={
             "Content-MD5": content_md5,  # DevSkim: ignore DS126858
@@ -272,7 +272,55 @@ def put_vectors(
             "User-Agent": "gitpulse-vector-ingest/1.0",
         },
     )
-    _http_request(request, config.timeout, config.retries)
+    raw = _http_request(request, config.timeout, config.retries)
+    if not raw.strip():
+        return {}
+    try:
+        response = json.loads(raw)
+    except json.JSONDecodeError as error:
+        preview = raw.decode("utf-8", errors="replace")[:500]
+        raise IngestError(f"OSS 响应解析失败: {error}; 响应: {preview}") from error
+    if not isinstance(response, dict):
+        raise IngestError("OSS 响应不是 JSON 对象")
+    return response
+
+
+def put_vectors(
+    config: OssConfig, index: str, vectors: Sequence[dict[str, Any]]
+) -> None:
+    """调用 ``PutVectors`` 写入一批向量（单批最多 500 条）."""
+    if not vectors:
+        return
+    if len(vectors) > MAX_VECTOR_BATCH_SIZE:
+        raise IngestError(f"单批向量数 {len(vectors)} 超过上限 {MAX_VECTOR_BATCH_SIZE}")
+
+    _oss_vector_request(
+        config, "putVectors", {"indexName": index, "vectors": list(vectors)}
+    )
+
+
+def query_vectors(
+    config: OssConfig, index: str, vector: Sequence[float], top_k: int
+) -> list[dict[str, Any]]:
+    """调用 ``QueryVectors`` 做近似最近邻检索，返回匹配向量列表."""
+    if not 0 < top_k <= MAX_TOP_K:
+        raise IngestError(f"top_k 必须在 1~{MAX_TOP_K} 之间")
+
+    response = _oss_vector_request(
+        config,
+        "queryVectors",
+        {
+            "indexName": index,
+            "queryVector": {"float32": list(vector)},
+            "topK": top_k,
+            "returnDistance": True,
+            "returnMetadata": True,
+        },
+    )
+    vectors = response.get("vectors", [])
+    if not isinstance(vectors, list):
+        raise IngestError("QueryVectors 响应缺少 vectors 列表")
+    return vectors
 
 
 def embed_texts(options: IngestOptions, texts: Sequence[str]) -> list[list[float]]:
@@ -535,6 +583,32 @@ def run_ingest(inputs: Sequence[str], options: IngestOptions) -> tuple[int, int]
     return len(chunks), written
 
 
+def run_query(
+    options: IngestOptions, query: str, top_k: int, as_json: bool = False
+) -> int:
+    """检索知识库并输出结果，返回命中条数."""
+    embedding = embed_texts(options, [query])[0]
+    results = query_vectors(options.oss, options.oss.index, embedding, top_k)
+
+    if as_json:
+        print(json.dumps(results, ensure_ascii=False, indent=2))
+        return len(results)
+
+    if not results:
+        print("未找到匹配结果", file=sys.stderr)
+        return 0
+
+    for index, item in enumerate(results, start=1):
+        distance = item.get("distance")
+        print(f"{index}. {item.get('key', '')}  distance={distance}")
+        metadata = item.get("metadata")
+        if isinstance(metadata, dict):
+            for field_name in ("source", "title", "kind", "chunk", "tags"):
+                if field_name in metadata:
+                    print(f"   {field_name}: {metadata[field_name]}")
+    return len(results)
+
+
 def _env(*names: str) -> str:
     """返回第一个非空环境变量的值."""
     for name in names:
@@ -616,10 +690,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "将知识文档切片、调用百炼 text-embedding-v4 生成向量，"
-            "并通过 OSS V4 签名 API 写入向量 Bucket（无需 SDK/ossutil）。"
+            "并通过 OSS V4 签名 API 写入/检索向量 Bucket（无需 SDK/ossutil）。"
         )
     )
-    parser.add_argument("inputs", nargs="+", help="Markdown/TXT 文件、JSONL 或目录")
+    parser.add_argument(
+        "inputs", nargs="*", help="Markdown/TXT 文件、JSONL 或目录（写入模式）"
+    )
+    parser.add_argument("--query", default="", help="检索文本；提供后进入只读检索模式")
+    parser.add_argument("--top-k", type=int, default=5, help="检索返回条数（上限 500）")
+    parser.add_argument("--json", action="store_true", help="检索结果以 JSON 输出")
     parser.add_argument(
         "--bucket",
         default=_env("OSS_VECTOR_BUCKET") or "cnb-knowledge-base",
@@ -697,10 +776,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """脚本入口：解析参数并执行导入."""
+    """脚本入口：解析参数并执行导入或检索."""
     args = build_parser().parse_args(argv)
     try:
+        if args.query and args.inputs:
+            raise IngestError("--query 与输入文件不能同时使用")
+        if args.query and args.dry_run:
+            raise IngestError("--query 不支持 --dry-run")
+        if not args.query and not args.inputs:
+            raise IngestError("请提供输入文件，或使用 --query 进行检索")
+
         options = _build_options(args)
+        if args.query:
+            count = run_query(options, args.query, args.top_k, args.json)
+            if not args.quiet and not args.json:
+                print(f"查询完成：返回 {count} 条结果", file=sys.stderr)
+            return 0
+
         chunk_count, written = run_ingest(args.inputs, options)
     except IngestError as error:
         print(f"错误: {error}", file=sys.stderr)

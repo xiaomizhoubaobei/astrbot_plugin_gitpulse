@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 GitPulse 是一个 **AstrBot 插件**（Python 3.12+），用于接收 GitHub Webhook（`push` / `issues` / `pull_request` / `release` / `workflow_run` / `star` / `watch` / `issue_comment` / `ping`），格式化为聊天消息后转发到 AstrBot 指定会话；可选通过 AstrBot 的 LLM 能力改写消息。插件不是独立进程——由 AstrBot 加载后，自己启动一个 aiohttp HTTP 服务监听配置路径 `webhook_path`（默认 `/webhook`）。
 
-**`AGENTS.md` 是本仓库的权威工程规范**（提交信息、GPG 强制签名、PR 流程、CI 口径、目录约定），优先级高于本文件；动手前先读相关章节。
+**`AGENTS.md` 是只读的历史工程规范，禁止修改**（提交信息、GPG 强制签名、PR 流程、CI 口径等仍可参考）；工程约定如有更新，一律写入本文件 `CLAUDE.md`，两者冲突时以本文件为准。
 
 ## 常用命令
 
@@ -154,15 +154,21 @@ curl -sS -X PATCH \
 - 更新已发表的评论：`PATCH https://api.cnb.cool/<repo>/-/issues/<number>/comments/<comment_id>`，body 为 `{"body":"..."}`。
 - 关闭后复核：`GET https://api.cnb.cool/<repo>/-/issues/<number>` 的 `state` 应为 `closed`、`comment_count` 至少为 1；必要时抓取 Issue 页面确认 Markdown 链接已正确渲染。
 
-## 百炼记忆库（Claude Code 工作纪律）
+## 向量知识库（Claude Code 工作纪律）
 
-本组织用阿里云百炼共享记忆库跨仓库沉淀可复用结论。Claude Code 必须主动读写，不等用户提醒；具体命令见 `.claude/skills/bailian-memory/SKILL.md`。
+本组织使用阿里云上海 OSS 向量 Bucket 沉淀跨仓库可复用的结论与踩坑记录，替代原百炼共享记忆库。Claude Code 必须主动读写，不等用户提醒。
 
-- **开场检索**：非一次性任务开始前先 `search`（用任务关键词或报错原文，`similarity_threshold` 0.5~0.7）；命中优先复用，返回空属正常，不重试。
-- **收尾沉淀**：仅当产出跨仓库可复用结论（平台约定、踩坑解法、用户长期偏好、字段口径）时 `add`；一次一条、≤512 字符，写清「结论 + 适用场景」，并带 `repo_slug` / `repo_scope` / `user_identity` 元数据。
-- **先查重再写**：已有结论用 `update` 补充，不要重复 `add`；结论失效用 `update` 修正或 `delete` 退役（删前先 `search` / `list` 确认 `memory_node_id`，删除不可恢复）。
-- **不写入**：逐次任务流水、一次性 diff、未脱敏的 Token / 密钥 / 隐私、只在本仓库成立的临时信息（应放仓库文档或 `meta_data`）。
-- **入口**：NPC 运行时用 `/app/scripts/bailian-memory.py`；开发容器无该脚本时按技能内的 HTTP API 调用。**禁止**把该脚本复制进本仓库（属 SuperNPC 运行时，复制会造成版本分叉）。
+- **存储**：向量 Bucket `cnb-knowledge-base`，索引 `cnbknowledge`（`cn-shanghai`，1024 维 float32，cosine）。
+- **开场检索**：非一次性任务开始前先检索相关结论：
+  `python scripts/vector_ingest.py --query "<任务关键词或报错原文>" --top-k 5`
+  命中优先复用；返回空属正常，不重试。
+- **收尾沉淀**：仅当产出跨仓库可复用结论（平台约定、踩坑解法、字段口径）时写入：
+  `python scripts/vector_ingest.py --kind pitfall --tag cnb <文件或目录>`
+  写清「结论 + 适用场景」；同一来源重复写入会覆盖同序号切片，先检索查重，避免重复内容。
+- **不写入**：逐次任务流水、一次性 diff、未脱敏的 Token / 密钥 / 隐私、只在本仓库成立的临时信息（应放仓库文档）。
+- **环境变量**：`DASHSCOPE_API_KEY`、`ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`、`OSS_VECTOR_ACCOUNT_ID`。
+- **稳定性**：向量写入后索引更新有短暂延迟（约数十秒），刚写入的内容可能暂时检索不到；知识库不可用只告警，不阻断主流程。
+- **入口**：唯一读写工具为 `scripts/vector_ingest.py`（纯标准库，自实现百炼 embedding 与 OSS V4 签名），详细用法见 `scripts/README.md`。
 
 ## CI 概览
 
