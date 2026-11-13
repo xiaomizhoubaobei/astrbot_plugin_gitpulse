@@ -606,6 +606,36 @@ async def test_code_review_disabled_skips_summary(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_code_review_skips_when_repo_muted(monkeypatch):
+    """仓库被路由静音（空数组）时不拉 diff、不调 LLM，摘要直接跳过."""
+    calls = []
+
+    async def fake_summary(plugin_instance, event_type, data):
+        calls.append(event_type)
+        return "- 摘要"
+
+    async def fake_handler(data, ctx):
+        return "template-message"
+
+    monkeypatch.setattr(plugin_module, "handle_push_event", fake_handler)
+    monkeypatch.setattr(diff_summary_service, "summarize_changes", fake_summary)
+    context = _FakeContext()
+    plugin = _make_plugin(
+        context,
+        enable_code_review=True,
+        repo_routes='{"owner/repo": []}',
+        target_umo="fallback",
+    )
+    payload = {"repository": {"full_name": "owner/repo"}}
+
+    await plugin.handle_webhook(_request("push", json.dumps(payload).encode("utf-8")))
+    await plugin.wait_for_background_tasks()
+
+    assert calls == []
+    assert context.sent == []
+
+
+@pytest.mark.asyncio
 async def test_code_review_failure_keeps_template_message(monkeypatch):
     """摘要返回 None 时只发送模板消息，不发送空摘要."""
 

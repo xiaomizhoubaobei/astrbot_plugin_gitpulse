@@ -237,13 +237,15 @@ async def summarize_changes(
     if not url:
         return None
 
+    # 先确认 LLM Provider 可用，再拉 diff：Provider 不可用时拉取只会白耗
+    # GitHub 未认证限额（约 60 次/小时），限额耗尽后恢复 Provider 也拿不到 diff。
+    provider_id = await resolve_provider_id(plugin_instance)
+    if not provider_id:
+        return None
+
     diff = await fetch_diff(url, getattr(plugin_instance.cfg, "github_token", ""))
     if not diff.strip():
         logger.info(f"GitHub Webhook: No diff content for {event_type}, skip summary")
-        return None
-
-    provider_id = await resolve_provider_id(plugin_instance)
-    if not provider_id:
         return None
 
     max_diff_chars = getattr(plugin_instance.cfg, "code_review_max_diff_chars", 0)

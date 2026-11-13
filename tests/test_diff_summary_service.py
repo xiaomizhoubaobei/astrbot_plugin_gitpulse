@@ -299,9 +299,11 @@ async def test_summarize_changes_skips_when_diff_empty(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_summarize_changes_skips_without_provider(monkeypatch):
-    """无法解析 Provider 时不调用 LLM，直接放弃摘要."""
+    """无法解析 Provider 时不拉 diff、不调用 LLM，避免白耗 GitHub 限额."""
+    fetch_calls = []
 
     async def fake_fetch(url, token="", timeout=0):
+        fetch_calls.append(url)
         return "diff"
 
     monkeypatch.setattr(service, "fetch_diff", fake_fetch)
@@ -309,6 +311,7 @@ async def test_summarize_changes_skips_without_provider(monkeypatch):
     plugin = _FakePlugin(context, llm_provider_id="")
 
     assert await service.summarize_changes(plugin, "push", _push_payload()) is None
+    assert fetch_calls == []
     assert context.llm_calls == []
 
 

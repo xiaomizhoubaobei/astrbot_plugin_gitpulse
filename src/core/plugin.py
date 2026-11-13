@@ -247,7 +247,9 @@ class GitHubWebhookPlugin(Star):
         self, event_type: str, data: dict, target_umos: list[str]
     ):
         """为 push / pull_request 追加 AI 变更摘要；失败时静默跳过."""
-        if not self.cfg.enable_code_review:
+        # 仓库被静音（路由为空数组）或未命中任何目标时，摘要即使生成也会被
+        # send_message 丢弃，提前返回可省下 GitHub API 调用与 LLM 额度。
+        if not self.cfg.enable_code_review or not target_umos:
             return
         try:
             from ..services.diff_summary_service import summarize_changes
