@@ -1,6 +1,81 @@
-# GitHub Webhook 测试工具
+# GitPulse 脚本工具
 
-这个目录包含用于测试 GitPulse 插件的脚本。
+这个目录包含测试 GitPulse 插件与维护项目知识库的脚本。
+
+## vector_ingest.py
+
+把 Markdown / 文本 / JSONL 知识文档切片，调用百炼 `text-embedding-v4` 生成向量，
+再通过 **OSS V4 签名 API** 写入阿里云 OSS 向量 Bucket。
+
+脚本只依赖 Python 标准库：运行镜像未安装 OSS / 百炼 SDK 时也能直接执行，
+V4 签名（`OSS4-HMAC-SHA256`）由脚本内部实现。
+
+### 前提
+
+1. 已创建 OSS 向量 Bucket 与索引，且索引维度与 `--dimension` 一致；
+2. 环境变量已注入凭证（不会写入命令行，避免出现在进程列表）：
+
+```bash
+export DASHSCOPE_API_KEY="sk-..."                       # 百炼嵌入模型
+export ALIBABA_CLOUD_ACCESS_KEY_ID="..."                # OSS V4 签名
+export ALIBABA_CLOUD_ACCESS_KEY_SECRET="..."
+export OSS_VECTOR_ACCOUNT_ID="<阿里云账号 ID>"           # 也可用 --account-id
+```
+
+可选环境变量：`OSS_VECTOR_BUCKET`、`OSS_VECTOR_INDEX`、`OSS_VECTOR_REGION`、
+`OSS_VECTOR_ENDPOINT`；命令行参数优先级更高。
+
+### 基本用法
+
+```bash
+# 1. 先看切片计划，不调用任何 API、不消耗额度
+./scripts/vector_ingest.py --dry-run docs/
+
+# 2. 导入单个 Markdown / 文本文件
+./scripts/vector_ingest.py --kind pitfall --tag cnb --tag gpg docs/05-troubleshooting.md
+
+# 3. 递归导入目录
+./scripts/vector_ingest.py --kind knowledge --tag cnb docs/
+
+# 4. 使用内网 Endpoint（与 OSS 同地域的 ECS 上运行时）
+./scripts/vector_ingest.py --internal docs/
+
+# 5. 自定义切片大小与批次
+./scripts/vector_ingest.py \
+  --chunk-size 800 --chunk-overlap 100 \
+  --embed-batch-size 10 --vector-batch-size 100 \
+  docs/
+```
+
+### 输入格式
+
+- `.md` / `.markdown` / `.txt`：按 `--chunk-size` 切片，优先在段落/句子边界断开，
+  保留 `--chunk-overlap` 字符重叠；Markdown 首个 `# ` 标题会写入 metadata。
+- `.jsonl`：每行一个 JSON 对象，支持以下字段：
+
+```json
+{"text": "正文", "metadata": {"repo": "owner/repo"}, "key": "可选自定义主键"}
+{"content": "与 text 等价", "metadata": {"kind": "pitfall"}}
+```
+
+### 主键与幂等
+
+文本文件的向量主键为 `cnb:<来源路径哈希>:<切片序号>`。对同一来源重复导入会
+**覆盖**相同序号的向量；若文件变短导致切片数减少，旧的多余切片不会自动删除，
+需要按主键另行清理。JSONL 可通过 `key` 字段自定义主键。
+
+### 限制
+
+- 单次嵌入请求最多 10 条文本（脚本会分批，超过上限直接报错）；
+- 单次 `PutVectors` 最多 500 条向量；
+- `text-embedding-v4` 的 `dimension` 必须与索引维度一致（默认 1024）；
+- 网络失败、429/5xx 会按指数退避重试，其余错误直接退出并打印响应体。
+
+### 测试
+
+```bash
+python -m pytest tests/test_vector_ingest.py -q
+```
 
 ## test-webhook.sh
 
