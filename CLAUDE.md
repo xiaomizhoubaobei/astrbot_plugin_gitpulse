@@ -168,7 +168,7 @@ curl -sS -X PATCH \
 - **不写入**：逐次任务流水、一次性 diff、未脱敏的 Token / 密钥 / 隐私、只在本仓库成立的临时信息（应放仓库文档）。
 - **环境变量**：`DASHSCOPE_API_KEY`、`ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`、`OSS_VECTOR_ACCOUNT_ID`。
 - **稳定性**：向量写入后索引更新有短暂延迟（约数十秒），刚写入的内容可能暂时检索不到；知识库不可用只告警，不阻断主流程。
-- **入口**：唯一读写工具为 `scripts/vector_ingest.py`（纯标准库，自实现百炼 embedding 与 OSS V4 签名），详细用法见 `scripts/README.md`。
+- **入口**：唯一读写工具为 `scripts/vector_ingest.py`；操作流程见 `.claude/skills/vector-knowledge/SKILL.md`，详细参数见 `scripts/README.md`。
 
 ## CI 概览
 
