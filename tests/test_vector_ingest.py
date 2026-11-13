@@ -356,6 +356,132 @@ def test_query_vectors_builds_expected_payload(monkeypatch):
     assert result[0]["key"] == "k1"
 
 
+def test_list_vectors_paginates_and_combines(monkeypatch):
+    """ListVectors 应自动翻页并合并结果."""
+    calls = []
+
+    def fake_request(config, operation, body):
+        calls.append((operation, body))
+        if "nextToken" not in body:
+            return {"vectors": [{"key": "a"}], "nextToken": "t1"}
+        return {"vectors": [{"key": "b"}], "nextToken": ""}
+
+    monkeypatch.setattr(vector_ingest, "_oss_vector_request", fake_request)
+
+    result = vector_ingest.list_vectors(_oss_config(), "idx")
+
+    assert [vector["key"] for vector in result] == ["a", "b"]
+    assert calls[0][0] == "listVectors"
+    assert calls[0][1]["returnMetadata"] is True
+    assert calls[1][1]["nextToken"] == "t1"
+
+
+def test_list_vectors_applies_repo_filter(monkeypatch):
+    """按仓库审计时应把 repo 作为 metadata filter 传给 ListVectors."""
+    captured = {}
+
+    def fake_request(config, operation, body):
+        captured.update(body)
+        return {"vectors": [], "nextToken": ""}
+
+    monkeypatch.setattr(vector_ingest, "_oss_vector_request", fake_request)
+
+    vector_ingest.list_vectors(_oss_config(), "idx", repo="owner/repo")
+
+    assert captured["filter"] == {"repo": {"$eq": "owner/repo"}}
+
+
+def test_list_vectors_detects_repeated_token(monkeypatch):
+    """服务端重复返回同一 nextToken 时必须中止，避免死循环."""
+
+    def fake_request(config, operation, body):
+        return {"vectors": [], "nextToken": "same"}
+
+    monkeypatch.setattr(vector_ingest, "_oss_vector_request", fake_request)
+
+    with pytest.raises(vector_ingest.IngestError, match="重复"):
+        vector_ingest.list_vectors(_oss_config(), "idx")
+
+
+def test_list_repo_counts_groups_by_metadata(monkeypatch):
+    """按 metadata.repo 统计数量，缺失的归入 (unassigned)."""
+    monkeypatch.setattr(
+        vector_ingest,
+        "list_vectors",
+        lambda config, index: [
+            {"key": "1", "metadata": {"repo": "a/b"}},
+            {"key": "2", "metadata": {"repo": "a/b"}},
+            {"key": "3", "metadata": {"repo": "c/d"}},
+            {"key": "4", "metadata": {}},
+        ],
+    )
+
+    counts = vector_ingest.list_repo_counts(_oss_config(), "idx")
+
+    assert counts == {"a/b": 2, "c/d": 1, "(unassigned)": 1}
+
+
+def test_delete_vectors_batches_keys(monkeypatch):
+    """DeleteVectors 单批超过上限时应拆分."""
+    monkeypatch.setattr(vector_ingest, "MAX_DELETE_BATCH", 2)
+    calls = []
+
+    def fake_request(config, operation, body):
+        calls.append((operation, body))
+        return {}
+
+    monkeypatch.setattr(vector_ingest, "_oss_vector_request", fake_request)
+
+    deleted = vector_ingest.delete_vectors(_oss_config(), "idx", ["a", "b", "c"])
+
+    assert deleted == 3
+    assert len(calls) == 2
+    assert calls[0][0] == "deleteVectors"
+    assert calls[0][1]["keys"] == ["a", "b"]
+    assert calls[1][1]["keys"] == ["c"]
+
+
+def test_delete_repo_dry_run_does_not_delete(monkeypatch):
+    """--dry-run 只统计数量，不调用删除接口."""
+    monkeypatch.setattr(
+        vector_ingest,
+        "list_vectors",
+        lambda config, index, repo=None: [
+            {"key": "a"},
+            {"key": "b"},
+        ],
+    )
+    monkeypatch.setattr(
+        vector_ingest,
+        "delete_vectors",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("不应删除")),
+    )
+
+    assert (
+        vector_ingest.delete_repo(_oss_config(), "idx", "owner/repo", dry_run=True) == 2
+    )
+
+
+def test_delete_repo_deletes_all_keys(monkeypatch):
+    """非 dry-run 时应删除该仓库的全部主键."""
+    monkeypatch.setattr(
+        vector_ingest,
+        "list_vectors",
+        lambda config, index, repo=None: [{"key": "a"}, {"key": "b"}],
+    )
+    captured = {}
+    monkeypatch.setattr(
+        vector_ingest,
+        "delete_vectors",
+        lambda config, index, keys: captured.update(keys=list(keys)) or len(keys),
+    )
+
+    deleted = vector_ingest.delete_repo(_oss_config(), "idx", "owner/repo")
+
+    assert deleted == 2
+    assert captured["keys"] == ["a", "b"]
+
+
 def test_query_vectors_without_repo_omits_filter(monkeypatch):
     """跨仓库检索时不带 repo filter."""
     captured = {}
@@ -496,3 +622,70 @@ def test_main_without_inputs_returns_error(capsys):
     """既没有输入文件也没有 --query 时应给出明确错误."""
     assert vector_ingest.main([]) == 2
     assert "请提供输入文件" in capsys.readouterr().err
+
+
+def _set_oss_env(monkeypatch):
+    """设置审计/清理所需的最小 OSS 凭证（不需要百炼 Key）."""
+    for name, value in (
+        ("ALIBABA_CLOUD_ACCESS_KEY_ID", "ak"),
+        ("ALIBABA_CLOUD_ACCESS_KEY_SECRET", "sk"),
+        ("OSS_VECTOR_ACCOUNT_ID", "123"),
+    ):
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+
+
+def test_main_list_repos_does_not_require_dashscope(monkeypatch, capsys):
+    """--list-repos 只读 OSS，不应强制要求 DASHSCOPE_API_KEY."""
+    _set_oss_env(monkeypatch)
+    monkeypatch.setattr(
+        vector_ingest,
+        "list_repo_counts",
+        lambda config, index: {"b/repo": 2, "a/repo": 1},
+    )
+
+    exit_code = vector_ingest.main(["--list-repos"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "b/repo" in captured.out
+    assert "TOTAL" in captured.out
+
+
+def test_main_list_repos_json(monkeypatch, capsys):
+    """--list-repos --json 应输出机器可读映射."""
+    _set_oss_env(monkeypatch)
+    monkeypatch.setattr(
+        vector_ingest, "list_repo_counts", lambda config, index: {"a/repo": 3}
+    )
+
+    assert vector_ingest.main(["--list-repos", "--json"]) == 0
+
+    assert json.loads(capsys.readouterr().out) == {"a/repo": 3}
+
+
+def test_main_delete_requires_repo(capsys):
+    """--delete 必须显式指定仓库，避免误删全库."""
+    assert vector_ingest.main(["--delete"]) == 2
+    assert "必须显式指定 --repo" in capsys.readouterr().err
+
+
+def test_main_delete_dry_run(monkeypatch, capsys):
+    """--delete --dry-run 只统计，不真正删除."""
+    _set_oss_env(monkeypatch)
+    monkeypatch.setattr(vector_ingest, "delete_repo", lambda *args, **kwargs: 5)
+
+    assert vector_ingest.main(["--delete", "--repo", "owner/repo", "--dry-run"]) == 0
+    assert "将删除 5 条" in capsys.readouterr().err
+
+
+def test_main_list_repos_rejects_inputs(capsys):
+    """--list-repos 不应与输入文件混用."""
+    assert vector_ingest.main(["--list-repos", "a.md"]) == 2
+    assert "不能与其它操作或输入混用" in capsys.readouterr().err
+
+
+def test_main_delete_rejects_all_repos(capsys):
+    """--delete 不允许搭配 --all-repos."""
+    assert vector_ingest.main(["--delete", "--repo", "owner/repo", "--all-repos"]) == 2
+    assert "只能与 --repo" in capsys.readouterr().err

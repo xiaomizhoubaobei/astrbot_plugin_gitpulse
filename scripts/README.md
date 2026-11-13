@@ -74,6 +74,26 @@ export OSS_VECTOR_ACCOUNT_ID="<阿里云账号 ID>"           # 也可用 --acco
 > 组织仓库数量已超过 OSS 单桶 100 个索引的上限，因此不要按仓库建索引；
 > 统一使用 metadata 隔离，未来需要物理拆分时可按仓库哈希迁移。
 
+### 仓库审计与清理
+
+```bash
+# 列出各仓库的向量数量
+./scripts/vector_ingest.py --list-repos
+
+# 机器可读输出
+./scripts/vector_ingest.py --list-repos --json
+
+# 预览某仓库将被删除的向量数量（不实际删除）
+./scripts/vector_ingest.py --delete --repo XMZZUZHI/Astrbot/astrbot_plugin_ots_memory --dry-run
+
+# 删除某仓库的全部向量（不可恢复）
+./scripts/vector_ingest.py --delete --repo XMZZUZHI/Astrbot/astrbot_plugin_ots_memory
+```
+
+- `--list-repos` 只需要 OSS 凭证，不要求 `DASHSCOPE_API_KEY`；
+- `--delete` 必须显式提供 `--repo`，不能与 `--all-repos` 或输入文件混用；
+- 删除前建议先加 `--dry-run` 核对数量。
+
 ### 检索
 
 ```bash

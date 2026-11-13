@@ -45,6 +45,8 @@ DEFAULT_VECTOR_BATCH_SIZE = 100
 MAX_EMBED_BATCH_SIZE = 10
 MAX_VECTOR_BATCH_SIZE = 500
 MAX_TOP_K = 500
+MAX_LIST_PAGE_SIZE = 1000
+MAX_DELETE_BATCH = 500
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 SUPPORTED_SUFFIXES = frozenset({".md", ".markdown", ".txt", ".jsonl"})
 # 切片时优先在这些边界处断开，避免把句子/段落从中间截断。
@@ -394,6 +396,78 @@ def query_vectors(
     return vectors
 
 
+def list_vectors(
+    config: OssConfig, index: str, repo: str | None = None
+) -> list[dict[str, Any]]:
+    """分页列出索引中的向量（含 metadata）；可按仓库过滤."""
+    results: list[dict[str, Any]] = []
+    next_token = ""
+    seen_tokens: set[str] = set()
+    for _ in range(1000):  # 防御异常 nextToken 导致死循环
+        body: dict[str, Any] = {
+            "indexName": index,
+            "maxResults": MAX_LIST_PAGE_SIZE,
+            "returnMetadata": True,
+        }
+        if repo:
+            body["filter"] = {"repo": {"$eq": repo}}
+        if next_token:
+            body["nextToken"] = next_token
+
+        response = _oss_vector_request(config, "listVectors", body)
+        page = response.get("vectors", [])
+        if not isinstance(page, list):
+            raise IngestError("ListVectors 响应缺少 vectors 列表")
+        results.extend(page)
+
+        next_token = str(response.get("nextToken") or "")
+        if not next_token:
+            return results
+        if next_token in seen_tokens:
+            raise IngestError("ListVectors 返回了重复的 nextToken，已中止")
+        seen_tokens.add(next_token)
+    raise IngestError("ListVectors 分页次数超过上限，已中止")
+
+
+def list_repo_counts(config: OssConfig, index: str) -> dict[str, int]:
+    """统计各仓库的向量数量；缺少 repo metadata 的归入 (unassigned)."""
+    counts: dict[str, int] = {}
+    for vector in list_vectors(config, index):
+        metadata = vector.get("metadata")
+        repo = ""
+        if isinstance(metadata, dict):
+            value = metadata.get("repo")
+            if isinstance(value, str):
+                repo = value
+        key = repo or "(unassigned)"
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def delete_vectors(config: OssConfig, index: str, keys: Sequence[str]) -> int:
+    """按主键批量删除向量（单批最多 500 条）."""
+    unique_keys = list(dict.fromkeys(key for key in keys if key))
+    for start in range(0, len(unique_keys), MAX_DELETE_BATCH):
+        batch = unique_keys[start : start + MAX_DELETE_BATCH]
+        _oss_vector_request(
+            config, "deleteVectors", {"indexName": index, "keys": batch}
+        )
+    return len(unique_keys)
+
+
+def delete_repo(config: OssConfig, index: str, repo: str, dry_run: bool = False) -> int:
+    """删除指定仓库的全部向量；``dry_run`` 只统计不删除."""
+    vectors = list_vectors(config, index, repo=repo)
+    keys = [
+        vector["key"]
+        for vector in vectors
+        if isinstance(vector.get("key"), str) and vector["key"]
+    ]
+    if dry_run:
+        return len(keys)
+    return delete_vectors(config, index, keys)
+
+
 def embed_texts(options: IngestOptions, texts: Sequence[str]) -> list[list[float]]:
     """调用百炼 ``text-embedding-v4`` 生成向量，返回与输入同序的向量列表."""
     if not texts:
@@ -723,16 +797,31 @@ def _build_options(args: argparse.Namespace) -> IngestOptions:
         if args.internal
         else f"{args.region}.oss-vectors.aliyuncs.com"
     )
-    if not args.dry_run:
+
+    list_mode = bool(getattr(args, "list_repos", False))
+    delete_mode = bool(getattr(args, "delete", False))
+    if list_mode and (
+        delete_mode or args.query or args.repo or args.all_repos or args.inputs
+    ):
+        raise IngestError("--list-repos 不能与其它操作或输入混用")
+    if delete_mode and (list_mode or args.query or args.all_repos or args.inputs):
+        raise IngestError("--delete 只能与 --repo 搭配使用")
+    if delete_mode and not args.repo:
+        raise IngestError("--delete 必须显式指定 --repo，避免误删")
+
+    needs_oss = list_mode or delete_mode or not args.dry_run
+    needs_dashscope = not (list_mode or delete_mode) and not args.dry_run
+    if needs_oss:
         missing = [
             name
             for name, value in (
                 ("ALIBABA_CLOUD_ACCESS_KEY_ID", access_key_id),
                 ("ALIBABA_CLOUD_ACCESS_KEY_SECRET", access_key_secret),
-                ("DASHSCOPE_API_KEY", _env("DASHSCOPE_API_KEY")),
             )
             if not value
         ]
+        if needs_dashscope and not _env("DASHSCOPE_API_KEY"):
+            missing.append("DASHSCOPE_API_KEY")
         if not args.account_id:
             missing.append("--account-id / OSS_VECTOR_ACCOUNT_ID")
         if missing:
@@ -753,7 +842,14 @@ def _build_options(args: argparse.Namespace) -> IngestOptions:
     if args.retries < 0:
         raise IngestError("retries 不能为负数")
 
-    if args.all_repos:
+    repo: str | None
+    if list_mode:
+        repo = ""
+    elif delete_mode:
+        repo = normalize_repo(args.repo)
+        if not repo:
+            raise IngestError(f"--repo 非法: {args.repo!r}")
+    elif args.all_repos:
         if args.repo:
             raise IngestError("--all-repos 与 --repo 不能同时使用")
         if not args.query:
@@ -806,7 +902,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "将知识文档切片、调用百炼 text-embedding-v4 生成向量，"
-            "并通过 OSS V4 签名 API 按仓库隔离地写入/检索向量 Bucket"
+            "并通过 OSS V4 签名 API 按仓库隔离地写入/检索/审计/清理向量 Bucket"
             "（无需 SDK/ossutil）。"
         )
     )
@@ -815,7 +911,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--query", default="", help="检索文本；提供后进入只读检索模式")
     parser.add_argument("--top-k", type=int, default=5, help="检索返回条数（上限 500）")
-    parser.add_argument("--json", action="store_true", help="检索结果以 JSON 输出")
+    parser.add_argument("--json", action="store_true", help="检索/审计结果以 JSON 输出")
+    parser.add_argument(
+        "--list-repos",
+        action="store_true",
+        help="列出各仓库的向量数量（仓库级审计）",
+    )
+    parser.add_argument(
+        "--delete",
+        action="store_true",
+        help="删除 --repo 指定仓库的全部向量；建议先加 --dry-run 预览",
+    )
     parser.add_argument(
         "--repo",
         default="",
@@ -903,17 +1009,49 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """脚本入口：解析参数并执行导入或检索."""
+    """脚本入口：解析参数并执行导入、检索、审计或清理."""
     args = build_parser().parse_args(argv)
     try:
         if args.query and args.inputs:
             raise IngestError("--query 与输入文件不能同时使用")
         if args.query and args.dry_run:
             raise IngestError("--query 不支持 --dry-run")
-        if not args.query and not args.inputs:
-            raise IngestError("请提供输入文件，或使用 --query 进行检索")
+        if not (args.query or args.list_repos or args.delete) and not args.inputs:
+            raise IngestError(
+                "请提供输入文件，或使用 --query / --list-repos / --delete"
+            )
 
         options = _build_options(args)
+        if args.list_repos:
+            counts = list_repo_counts(options.oss, options.oss.index)
+            if args.json:
+                print(json.dumps(counts, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                total = 0
+                for repo, count in sorted(
+                    counts.items(), key=lambda item: (-item[1], item[0])
+                ):
+                    print(f"{count:>6}  {repo}")
+                    total += count
+                print(f"{total:>6}  TOTAL")
+            return 0
+
+        if args.delete:
+            count = delete_repo(
+                options.oss, options.oss.index, options.repo, args.dry_run
+            )
+            if args.dry_run:
+                print(
+                    f"[dry-run] 将删除 {count} 条向量（repo={options.repo}）",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"已删除 {count} 条向量（repo={options.repo}）",
+                    file=sys.stderr,
+                )
+            return 0
+
         if args.query:
             count = run_query(
                 options, args.query, args.top_k, args.json, args.all_repos

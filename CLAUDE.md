@@ -160,6 +160,7 @@ curl -sS -X PATCH \
 
 - **存储**：向量 Bucket `cnb-knowledge-base`，索引 `cnbknowledge`（`cn-shanghai`，1024 维 float32，cosine）。**知识库范围仅限 `XMZZUZHI/Astrbot/*` 子组织，其他子组织不写入。**
 - **仓库隔离**：每条向量写入 `repo` / `group` 元数据，检索默认只查当前仓库；`--repo` 缺省时从 `origin` 自动识别，`--all-repos` 仅用于明确的跨仓库检索；写入主键含仓库哈希，不同仓库同名文件不会互相覆盖。
+- **仓库审计/清理**：`--list-repos` 查看各仓库向量数；`--delete --repo <仓库>` 删除前必须先加 `--dry-run` 核对数量，删除不可恢复。
 - **开场检索**：非一次性任务开始前先检索相关结论：
   `python scripts/vector_ingest.py --query "<任务关键词或报错原文>" --top-k 5`
   命中优先复用；返回空属正常，不重试。

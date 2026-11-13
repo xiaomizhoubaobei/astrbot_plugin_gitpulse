@@ -35,6 +35,11 @@ python scripts/vector_ingest.py --kind pitfall --tag cnb docs/05-troubleshooting
 
 # 跨仓库检索（仅在明确需要组织级复用时使用）
 python scripts/vector_ingest.py --all-repos --query "<关键词>" --top-k 5
+
+# 仓库级审计 / 清理
+python scripts/vector_ingest.py --list-repos
+python scripts/vector_ingest.py --delete --repo "<仓库标识>" --dry-run
+python scripts/vector_ingest.py --delete --repo "<仓库标识>"
 ```
 
 环境变量：`DASHSCOPE_API_KEY`、`ALIBABA_CLOUD_ACCESS_KEY_ID`、`ALIBABA_CLOUD_ACCESS_KEY_SECRET`、`OSS_VECTOR_ACCOUNT_ID`。
@@ -46,4 +51,5 @@ python scripts/vector_ingest.py --all-repos --query "<关键词>" --top-k 5
 3. 写入内容写清「结论 + 适用场景」，一条切片只讲一件事。
 4. 写入后索引有约数十秒延迟，刚写入的内容可能暂时检索不到。
 5. 知识库是增强能力：调用失败只告警，不阻断主任务。
-6. 详细参数、批量导入与故障排查见 `scripts/README.md`。
+6. 仓库级清理使用 `--delete --repo`，删除前必须先跑 `--dry-run` 核对数量。
+7. 详细参数、批量导入与故障排查见 `scripts/README.md`。
