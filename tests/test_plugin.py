@@ -11,6 +11,7 @@ import aiohttp
 import pytest
 
 import src.core.plugin as plugin_module
+import src.services.diff_summary_service as diff_summary_service
 import src.services.llm_service as llm_service
 from src.core.config import normalize_webhook_path
 from src.core.constants import DEFAULT_WEBHOOK_PATH
@@ -90,6 +91,9 @@ def _make_plugin(context=None, **overrides):
         "llm_provider_id": "",
         "agent_timeout": 60,
         "agent_system_prompt": "",
+        "enable_code_review": False,
+        "github_token": "",
+        "code_review_max_diff_chars": 12000,
     }
     config.update(overrides)
     return GitHubWebhookPlugin(context or _FakeContext(), config)
@@ -541,6 +545,111 @@ async def test_agent_mode_delegates_to_llm_service(monkeypatch):
     ]
     # 直接发送由 llm_service 负责，plugin 这里不应再发一次
     assert context.sent == []
+
+
+@pytest.mark.asyncio
+async def test_code_review_summary_sent_after_template(monkeypatch):
+    """启用代码摘要时，模板消息之后追加一条独立的 AI 摘要消息."""
+    summary_calls = []
+
+    async def fake_summary(plugin_instance, event_type, data):
+        summary_calls.append((plugin_instance, event_type, data))
+        return "- 新增登录接口\n- 修复空指针"
+
+    async def fake_handler(data, ctx):
+        return "template-message"
+
+    monkeypatch.setattr(plugin_module, "handle_push_event", fake_handler)
+    monkeypatch.setattr(diff_summary_service, "summarize_changes", fake_summary)
+    context = _FakeContext()
+    plugin = _make_plugin(context, enable_code_review=True)
+    payload = {"ref": "refs/heads/main"}
+
+    response = await plugin.handle_webhook(
+        _request("push", json.dumps(payload).encode("utf-8"))
+    )
+    await plugin.wait_for_background_tasks()
+
+    assert response.status == 200
+    assert summary_calls == [(plugin, "push", payload)]
+    assert [
+        (umo, [component.text for component in chain.components])
+        for umo, chain in context.sent
+    ] == [
+        ("test:GroupMessage:1", ["template-message"]),
+        ("test:GroupMessage:1", ["🤖 AI 变更摘要\n- 新增登录接口\n- 修复空指针"]),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_code_review_disabled_skips_summary(monkeypatch):
+    """未启用代码摘要时不应调用 diff 摘要服务."""
+    calls = []
+
+    async def fake_summary(plugin_instance, event_type, data):
+        calls.append(event_type)
+        return "- 摘要"
+
+    async def fake_handler(data, ctx):
+        return "template-message"
+
+    monkeypatch.setattr(plugin_module, "handle_push_event", fake_handler)
+    monkeypatch.setattr(diff_summary_service, "summarize_changes", fake_summary)
+    context = _FakeContext()
+    plugin = _make_plugin(context, enable_code_review=False)
+
+    await plugin.handle_webhook(_request("push"))
+    await plugin.wait_for_background_tasks()
+
+    assert calls == []
+    assert len(context.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_code_review_failure_keeps_template_message(monkeypatch):
+    """摘要返回 None 时只发送模板消息，不发送空摘要."""
+
+    async def fake_summary(plugin_instance, event_type, data):
+        return None
+
+    async def fake_handler(data, ctx):
+        return "template-message"
+
+    monkeypatch.setattr(plugin_module, "handle_push_event", fake_handler)
+    monkeypatch.setattr(diff_summary_service, "summarize_changes", fake_summary)
+    context = _FakeContext()
+    plugin = _make_plugin(context, enable_code_review=True)
+
+    await plugin.handle_webhook(_request("push"))
+    await plugin.wait_for_background_tasks()
+
+    assert [[c.text for c in chain.components] for _, chain in context.sent] == [
+        ["template-message"]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_code_review_exception_keeps_template_message(monkeypatch):
+    """摘要服务意外抛异常时模板消息已发出，且不影响后台任务收敛."""
+
+    async def fake_summary(plugin_instance, event_type, data):
+        raise RuntimeError("summary boom")
+
+    async def fake_handler(data, ctx):
+        return "template-message"
+
+    monkeypatch.setattr(plugin_module, "handle_push_event", fake_handler)
+    monkeypatch.setattr(diff_summary_service, "summarize_changes", fake_summary)
+    context = _FakeContext()
+    plugin = _make_plugin(context, enable_code_review=True)
+
+    await plugin.handle_webhook(_request("push"))
+    await plugin.wait_for_background_tasks()
+
+    assert [[c.text for c in chain.components] for _, chain in context.sent] == [
+        ["template-message"]
+    ]
+    assert plugin._background_tasks == set()
 
 
 @pytest.mark.asyncio

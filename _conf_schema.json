@@ -82,5 +82,28 @@
     "type": "text",
     "default": "",
     "hint": "为 LLM 添加自定义的系统提示词，可以定义消息的风格、语气等。留空则使用默认提示词。"
+  },
+  "enable_code_review": {
+    "description": "启用 AI 代码变更摘要",
+    "type": "bool",
+    "default": false,
+    "hint": "启用后，push 与新建/重新打开/新增提交的 PR 事件会拉取 GitHub diff，调用 LLM 生成人类可读的中文变更摘要，并作为独立消息追加到群聊。需要可用的 LLM Provider；摘要失败不影响原有模板消息。"
+  },
+  "github_token": {
+    "description": "GitHub Token（可选）",
+    "type": "string",
+    "default": "",
+    "hint": "拉取 diff 用的 GitHub 只读 Token。公开仓库可留空（受 60 次/小时未认证限额约束）；私有仓库必须填写，且需具备该仓库的代码读取权限。Token 只用于访问 api.github.com。"
+  },
+  "code_review_max_diff_chars": {
+    "description": "送入 LLM 的 diff 字符上限",
+    "type": "int",
+    "slider": {
+      "min": 1000,
+      "max": 50000,
+      "step": 1000
+    },
+    "default": 12000,
+    "hint": "diff 超过该长度时只截取前 N 个字符送给 LLM，避免长 PR 撑爆上下文。默认 12000。"
   }
 }

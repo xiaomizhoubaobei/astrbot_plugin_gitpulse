@@ -222,6 +222,44 @@ LLM 处理超时时间（秒）。
 - 可能导致 GitHub 事件内容被压缩或忽略
 - 建议控制提示词长度，确保主要信息能传递给 LLM
 
+## AI 代码变更摘要配置
+
+该功能独立于 `enable_agent`：开启后会拉取本次变更的 GitHub diff，调用 LLM 生成面向非开发同事的中文摘要，并作为**独立消息**追加在原有事件消息之后。摘要失败（网络、LLM 异常、空输出）时只跳过摘要，不影响原有模板消息和 webhook 响应。
+
+触发范围：
+- `push` 事件（含至少一个 commit）
+- `pull_request` 事件的 `opened` / `reopened` / `synchronize` 动作
+
+### enable_code_review
+
+**类型**: `bool` | **默认值**: `false`
+
+是否启用 AI 代码变更摘要。
+
+- 需要在 AstrBot 中已配置 LLM Provider（`llm_provider_id` 或会话默认 Provider）
+- 每次摘要会额外消耗一次 LLM 调用
+- 摘要输出与事件模板消息分开推送，避免 LLM 改写误删摘要内容
+
+### github_token
+
+**类型**: `string` | **默认值**: `""` (可选)
+
+拉取 diff 使用的 GitHub 只读 Token。
+
+- 公开仓库可留空，但受 GitHub 未认证 API 限额（约 60 次/小时）约束
+- 私有仓库必须填写，且需具备对应仓库的代码读取权限
+- Token 只会发送到 `api.github.com`，不会随消息内容外泄
+
+### code_review_max_diff_chars
+
+**类型**: `int` | **默认值**: `12000`
+
+送入 LLM 的 diff 字符上限。
+
+- 超出部分会被截断，并在提示词中标注「diff 已截断」
+- diff 响应体本身还有 512 KiB 的读取上限，超大 PR 不会撑爆内存
+- 调大可覆盖更完整的变更，但会增加 token 消耗和响应时间
+
 ## 配置类型说明
 
 AstrBot 配置系统支持以下类型：

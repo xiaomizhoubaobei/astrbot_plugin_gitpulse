@@ -5,7 +5,11 @@ import json
 from astrbot.api import AstrBotConfig
 
 from src.core.config import PluginConfig
-from src.core.constants import DEFAULT_BIND_HOST, DEFAULT_PORT
+from src.core.constants import (
+    DEFAULT_BIND_HOST,
+    DEFAULT_CODE_REVIEW_MAX_DIFF_CHARS,
+    DEFAULT_PORT,
+)
 
 
 def _make_config(tmp_path, config_data: dict) -> AstrBotConfig:
@@ -82,5 +86,29 @@ def test_config_tolerates_missing_keys():
     assert plugin_config.enable_agent is False
     assert plugin_config.target_umo == ""
     assert plugin_config.webhook_secret == ""
+    assert plugin_config.enable_code_review is False
+    assert plugin_config.github_token == ""
+    # 摘要长度上限缺键时按默认值兜底，避免把 0 当作有效上限
+    assert (
+        plugin_config.code_review_max_diff_chars == DEFAULT_CODE_REVIEW_MAX_DIFF_CHARS
+    )
     # 不再抛 TypeError，且可安全参与比较
     assert (plugin_config.rate_limit > 0) is False
+
+
+def test_config_code_review_defaults_and_overrides(tmp_path):
+    """代码摘要配置应支持自定义值，非法上限回落到默认值."""
+    config_data = {
+        "enable_code_review": True,
+        "github_token": "ghp_example",
+        "code_review_max_diff_chars": 8000,
+    }
+    plugin_config = PluginConfig(_make_config(tmp_path, config_data))
+    assert plugin_config.enable_code_review is True
+    assert plugin_config.github_token == "ghp_example"
+    assert plugin_config.code_review_max_diff_chars == 8000
+
+    for invalid in (0, -100, "not-a-number"):
+        config_data["code_review_max_diff_chars"] = invalid
+        fallback = PluginConfig(_make_config(tmp_path, config_data))
+        assert fallback.code_review_max_diff_chars == DEFAULT_CODE_REVIEW_MAX_DIFF_CHARS

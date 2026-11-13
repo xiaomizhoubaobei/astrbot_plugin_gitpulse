@@ -11,7 +11,11 @@ from astrbot.api import AstrBotConfig, logger
 
 from ..services.event_filter import parse_enabled_events
 from ..services.repo_router import parse_repo_routes
-from .constants import DEFAULT_BIND_HOST, DEFAULT_WEBHOOK_PATH
+from .constants import (
+    DEFAULT_BIND_HOST,
+    DEFAULT_CODE_REVIEW_MAX_DIFF_CHARS,
+    DEFAULT_WEBHOOK_PATH,
+)
 
 # 仅允许普通的 URL 路径字符：排除空白、查询串、片段以及 aiohttp 的
 # 动态路由标记（{}），避免用户配置意外生成通配路由。
@@ -106,6 +110,8 @@ class PluginConfig(ConfigNode):
     llm_provider_id: str
     agent_timeout: int
     agent_system_prompt: str
+    enable_code_review: bool
+    github_token: str
 
     @property
     def bind_host(self) -> str:
@@ -137,6 +143,20 @@ class PluginConfig(ConfigNode):
         """
         return parse_repo_routes(self._data.get("repo_routes"))
 
+    @property
+    def code_review_max_diff_chars(self) -> int:
+        """送入 LLM 的 diff 字符上限：未配置或非法时回落到默认值.
+
+        与 ``bind_host`` 相同，不做类型注解以免与 property 冲突。
+        宿主缺键会得到 ``None``，按类型兜底会变成 0；这里统一把
+        非正数视为「未配置」，避免把空 diff 送给 LLM。
+        """
+        try:
+            value = int(self._data.get("code_review_max_diff_chars"))
+        except (TypeError, ValueError):
+            value = 0
+        return value if value > 0 else DEFAULT_CODE_REVIEW_MAX_DIFF_CHARS
+
     @cached_property
     def enabled_events(self) -> frozenset[str] | None:
         """事件订阅白名单；``None`` 表示未配置，启用全部支持的事件."""
@@ -167,6 +187,11 @@ class PluginConfig(ConfigNode):
         logger.info(f"  agent_timeout: {self.agent_timeout}s")
         prompt_length = len(self.agent_system_prompt) if self.agent_system_prompt else 0
         logger.info(f"  agent_system_prompt: {prompt_length} chars")
+        logger.info(f"  enable_code_review: {self.enable_code_review}")
+        logger.info(
+            f"  github_token: {'configured' if self.github_token else '(none)'}"
+        )
+        logger.info(f"  code_review_max_diff_chars: {self.code_review_max_diff_chars}")
         logger.info(f"  rate_limit: {self.rate_limit} req/min")
         logger.info("=" * 60)
 

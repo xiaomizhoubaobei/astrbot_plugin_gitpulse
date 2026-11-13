@@ -29,6 +29,21 @@ DEFAULT_RATE_LIMIT = 10
 # Default LLM timeout (seconds)
 DEFAULT_LLM_TIMEOUT = 60
 
+# AI 代码变更摘要（可选增强）：把 GitHub diff 交给 LLM 生成人类可读摘要。
+# 单次送入 LLM 的 diff 字符上限；超出部分截断并在提示词中标注，避免长 PR
+# 撑爆上下文（字符数限制与下面按字节读取的上限是两道独立闸门）。
+DEFAULT_CODE_REVIEW_MAX_DIFF_CHARS = 12000
+
+# 拉取 diff 的 HTTP 超时（秒）。独立于 LLM 的 agent_timeout：拉取失败应快速
+# 放弃，把时间留给模板消息，而不是让后台任务长期挂起。
+DIFF_FETCH_TIMEOUT = 15.0
+
+# diff 响应体读取上限（字节）：超大 diff 只读前 512 KiB，防止内存被撑爆。
+MAX_DIFF_RESPONSE_BYTES = 512 * 1024
+
+# 单条摘要的输出上限，避免 LLM 长篇大论刷屏。
+MAX_SUMMARY_CHARS = 1000
+
 # GitHub event types
 EVENT_TYPE_PUSH = "push"
 EVENT_TYPE_ISSUES = "issues"
@@ -68,6 +83,12 @@ ACTION_PR_REOPENED = "reopened"
 # 历史问题（issue #4）：本常量曾误写为 synchronized，与 formatter 里的
 # synchronize 键拼写漂移，导致 🔀 分支永不命中；切勿再改回 synchronized。
 ACTION_PR_SYNCHRONIZE = "synchronize"
+
+# 允许触发 AI 代码摘要的 PR 动作：新建、重新打开与新增提交。
+# closed/labeled 等动作不产生新的可评审代码，调用 LLM 只会浪费额度。
+CODE_REVIEW_PR_ACTIONS = frozenset(
+    {ACTION_PR_OPENED, ACTION_PR_REOPENED, ACTION_PR_SYNCHRONIZE}
+)
 
 # Release actions（GitHub release 事件的 activity types）
 ACTION_RELEASE_PUBLISHED = "published"

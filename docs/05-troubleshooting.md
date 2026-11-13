@@ -126,6 +126,34 @@ GitHub Webhook: LLM response received, length: 312 chars
 GitHub Webhook: LLM output suspiciously short (input: 523 chars, output: 312 chars)
 ```
 
+## 开启了代码摘要但没有收到 AI 摘要消息
+
+### 现象
+
+- `enable_code_review = true`
+- Push / PR 事件正常收到模板消息
+- 模板消息之后没有「🤖 AI 变更摘要」消息
+
+### 可能原因
+
+1. **事件不在触发范围**：只有 `push`（含 commit）与 PR 的 `opened` / `reopened` / `synchronize` 动作会生成摘要；PR 关闭、打标签等动作不会触发。
+2. **diff 拉取失败**：私有仓库未配置 `github_token`，或 Token 无该仓库读取权限；公开仓库也可能触发未认证 API 限额（约 60 次/小时）。
+3. **LLM 不可用**：未配置 Provider、Provider 查询失败、调用超时或返回空内容。
+
+### 诊断方法
+
+在插件日志中搜索关键字：
+
+```
+GitHub Webhook: Failed to fetch diff
+GitHub Webhook: Diff fetch returned HTTP
+GitHub Webhook: Code review LLM timeout
+GitHub Webhook: Code review LLM failed
+GitHub Webhook: No diff content
+```
+
+摘要失败只会跳过摘要，不影响模板消息与 webhook 响应（HTTP 200），因此需要查看日志定位，而不是看 HTTP 状态码。
+
 ## Webhook Secret 配置不生效
 
 ### 现象

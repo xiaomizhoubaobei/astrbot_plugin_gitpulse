@@ -36,6 +36,7 @@ astrbot_plugin_gitpulse/
 │   │   └── verify_signature.py # Webhook 签名验证
 │   └── services/              # 业务服务层
 │       ├── __init__.py
+│       ├── diff_summary_service.py # AI 代码变更摘要（拉取 diff + LLM 总结）
 │       ├── event_filter.py     # enabled_events 订阅白名单解析
 │       ├── llm_service.py      # LLM 调用服务
 │       └── repo_router.py      # 多仓库路由（Repo -> UMO）

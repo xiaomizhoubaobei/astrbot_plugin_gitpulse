@@ -20,6 +20,35 @@ def _missing_urls(original: str, generated: str) -> set[str]:
     return _extract_urls(original) - _extract_urls(generated)
 
 
+async def resolve_provider_id(plugin_instance) -> str | None:
+    """解析 LLM Provider ID；未配置时回落到会话默认 Provider.
+
+    返回 ``None`` 表示无法确定 Provider（默认 Provider 查询失败或为空），
+    调用方应直接使用模板消息，不要再发起 LLM 调用。
+    """
+    if plugin_instance.cfg.llm_provider_id:
+        return plugin_instance.cfg.llm_provider_id
+
+    try:
+        provider_id = await plugin_instance.context.get_current_chat_provider_id(
+            plugin_instance.cfg.target_umo
+        )
+    except Exception as e:
+        logger.warning(
+            f"GitHub Webhook: Failed to get default provider: {e}, "
+            f"falling back to template"
+        )
+        return None
+
+    if not provider_id:
+        logger.warning(
+            "GitHub Webhook: No LLM provider available, falling back to template"
+        )
+        return None
+    logger.info(f"GitHub Webhook: Using default provider: {provider_id}")
+    return provider_id
+
+
 async def send_with_agent(
     plugin_instance,
     message: str,
@@ -58,23 +87,10 @@ async def send_with_agent(
         logger.info("=" * 60)
 
         # 获取 LLM provider ID
-        if plugin_instance.cfg.llm_provider_id:
-            provider_id = plugin_instance.cfg.llm_provider_id
-        else:
-            # 使用默认 provider
-            try:
-                provider_id = (
-                    await plugin_instance.context.get_current_chat_provider_id(
-                        plugin_instance.cfg.target_umo
-                    )
-                )
-                logger.info(f"GitHub Webhook: Using default provider: {provider_id}")
-            except Exception as e:
-                logger.warning(
-                    f"GitHub Webhook: Failed to get default provider: {e}, falling back to template"
-                )
-                await plugin_instance.send_message(message, target_umos)
-                return
+        provider_id = await resolve_provider_id(plugin_instance)
+        if not provider_id:
+            await plugin_instance.send_message(message, target_umos)
+            return
 
         # 调用 LLM
         try:

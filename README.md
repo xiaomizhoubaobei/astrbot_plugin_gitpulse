@@ -23,6 +23,7 @@ GitPulse 是一个 AstrBot 插件，用于接收 GitHub 事件（push、issues�
 - ✅ 请求速率限制（防止消息轰炸）
 - ✅ 全面的错误处理和日志记录
 - ✅ LLM 智能消息生成（支持自定义提示词）
+- ✅ AI 代码变更摘要（拉取 diff 生成人类可读的 Push / PR 摘要）
 - 🔜 自定义消息模板
 - 🔜 Release 事件支持
 
@@ -56,7 +57,10 @@ pip install -r requirements.txt
   "enable_agent": true,
   "llm_provider_id": "",
   "agent_timeout": 60,
-  "agent_system_prompt": ""
+  "agent_system_prompt": "",
+  "enable_code_review": false,
+  "github_token": "",
+  "code_review_max_diff_chars": 12000
 }
 ```
 

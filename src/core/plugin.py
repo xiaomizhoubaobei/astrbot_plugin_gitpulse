@@ -236,8 +236,31 @@ class GitHubWebhookPlugin(Star):
                 await send_with_agent(self, message, data, event_type, target_umos)
             else:
                 await self.send_message(message, target_umos)
+
+            # 摘要作为独立消息追加：模板/LLM 改写消息已经发出，
+            # 摘要失败不会影响主消息，也不会让 webhook 请求失败。
+            await self._send_code_review_summary(event_type, data, target_umos)
         except Exception as e:
             logger.error(f"GitHub Webhook: Error processing event: {e}", exc_info=True)
+
+    async def _send_code_review_summary(
+        self, event_type: str, data: dict, target_umos: list[str]
+    ):
+        """为 push / pull_request 追加 AI 变更摘要；失败时静默跳过."""
+        if not self.cfg.enable_code_review:
+            return
+        try:
+            from ..services.diff_summary_service import summarize_changes
+
+            summary = await summarize_changes(self, event_type, data)
+        except Exception as e:
+            logger.error(
+                f"GitHub Webhook: Code review summary failed unexpectedly: {e}",
+                exc_info=True,
+            )
+            return
+        if summary:
+            await self.send_message(f"🤖 AI 变更摘要\n{summary}", target_umos)
 
     async def _format_event(self, event_type: str, data: dict) -> str | None:
         """按事件类型调用对应 handler 生成模板消息."""
