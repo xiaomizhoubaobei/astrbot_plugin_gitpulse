@@ -194,11 +194,18 @@ def _now_timestamp() -> str:
 def _http_request(
     request: urllib.request.Request, timeout: float, retries: int
 ) -> bytes:
-    """发送 HTTP 请求；对限流/5xx 做指数退避重试，其余错误直接抛出."""
+    """发送 HTTPS 请求；对限流/5xx 做指数退避重试，其余错误直接抛出."""
+    scheme = urllib.parse.urlparse(request.full_url).scheme.lower()
+    if scheme != "https":
+        raise IngestError(f"仅允许 https 请求，拒绝 {scheme or '未知'} 协议")
+
     last_error = ""
     for attempt in range(retries + 1):
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            # 入口已强制 https，故屏蔽 B310 对 file:/自定义协议的静态告警。
+            with urllib.request.urlopen(  # nosec B310
+                request, timeout=timeout
+            ) as response:
                 return response.read()
         except urllib.error.HTTPError as error:
             body = error.read().decode("utf-8", errors="replace")

@@ -3,6 +3,8 @@
 import importlib.util
 import json
 import sys
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -240,3 +242,12 @@ def test_invalid_batch_or_dimension_returns_clean_error(
 
     assert exit_code == 2
     assert message in capsys.readouterr().err
+
+
+def test_http_request_rejects_non_https():
+    """非 https URL 必须在发请求前被拒绝，避免 file:/自定义协议（Bandit B310）."""
+    url = urllib.parse.urlunsplit(("http", "example.com", "/", "", ""))
+    request = urllib.request.Request(url, data=b"{}", method="POST")
+
+    with pytest.raises(vector_ingest.IngestError, match="仅允许 https"):
+        vector_ingest._http_request(request, timeout=1, retries=0)
