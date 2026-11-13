@@ -11,6 +11,7 @@ description: 读写阿里云 OSS 向量知识库（按仓库隔离）。任务�
 
 - Bucket：`cnb-knowledge-base`
 - 索引：`cnbknowledge`（`cn-shanghai`，1024 维 float32，cosine）
+- 范围：**仅收纳 `XMZZUZHI/Astrbot/*` 子组织**；其他子组织不写入
 - 工具：`scripts/vector_ingest.py`（纯标准库，自实现百炼 embedding 与 OSS V4 签名）
 
 ## 何时用

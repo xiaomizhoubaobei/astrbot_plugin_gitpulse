@@ -158,7 +158,7 @@ curl -sS -X PATCH \
 
 本组织使用阿里云上海 OSS 向量 Bucket 沉淀跨仓库可复用的结论与踩坑记录，替代原百炼共享记忆库。Claude Code 必须主动读写，不等用户提醒。
 
-- **存储**：向量 Bucket `cnb-knowledge-base`，索引 `cnbknowledge`（`cn-shanghai`，1024 维 float32，cosine）。
+- **存储**：向量 Bucket `cnb-knowledge-base`，索引 `cnbknowledge`（`cn-shanghai`，1024 维 float32，cosine）。**知识库范围仅限 `XMZZUZHI/Astrbot/*` 子组织，其他子组织不写入。**
 - **仓库隔离**：每条向量写入 `repo` / `group` 元数据，检索默认只查当前仓库；`--repo` 缺省时从 `origin` 自动识别，`--all-repos` 仅用于明确的跨仓库检索；写入主键含仓库哈希，不同仓库同名文件不会互相覆盖。
 - **开场检索**：非一次性任务开始前先检索相关结论：
   `python scripts/vector_ingest.py --query "<任务关键词或报错原文>" --top-k 5`

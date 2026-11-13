@@ -54,7 +54,8 @@ export OSS_VECTOR_ACCOUNT_ID="<阿里云账号 ID>"           # 也可用 --acco
 - `--repo` 未传时自动从 `git remote get-url origin` 识别；
 - 写入时主键为 `cnb:<仓库哈希>:<来源哈希>:<切片号>`，不同仓库的同名文件不会互相覆盖；
 - 元数据写入 `repo` 与 `group`（CNB 三级路径取第二段，GitHub 两级路径取 owner）；
-- 检索默认只查当前仓库，`--all-repos` 可跨仓库检索（仅检索模式）。
+- 检索默认只查当前仓库，`--all-repos` 可跨仓库检索（仅检索模式）；
+- **当前知识库只收纳 `XMZZUZHI/Astrbot/*` 子组织**；其他分组的数据已清理，不再写入。
 
 ```bash
 # 显式指定仓库（自动识别失败时使用）
