@@ -290,6 +290,43 @@ GitHub 在配置 Webhook 时会自动发送 Ping 事件，插件会自动响应�
 
 > 摘要链路只从 `api.github.com` 拉取 diff，仓库名与提交 SHA 会先做白名单校验，不接受 payload 中的任意 URL。
 
+### 群内 GitHub 快捷指令
+
+开启 `enable_github_commands` 后，可以直接在群里操作 GitHub，无需切到网页：
+
+```
+/github merge 12            合并 PR（默认 squash）
+/github merge 12 rebase     指定合并方式：squash / merge / rebase
+/github close 12            关闭 Issue 或 PR
+/github reopen 12           重新打开 Issue 或 PR
+/github comment 12 已修复    在 Issue / PR 下发表评论
+```
+
+编号支持三种写法：`12`、`#12`、`owner/repo#12`。未写仓库时使用
+`github_command_default_repo`，两者都没有则提示补全。
+
+成功回显示例：
+
+```
+🔀 已完成合并 PR：owner/repo#12
+合并方式：squash · 合并提交 1a2b3c4
+🔗 https://github.com/owner/repo/pull/12
+```
+
+失败时统一以 `⚠️` 开头并给出可读原因（如 Token 权限不足、PR 存在冲突、
+仓库未在授权列表内），不会把 GitHub 的原始报错或堆栈甩到群里。
+
+**安全边界（务必了解）**：
+
+- 写操作默认**仅 AstrBot 管理员**可执行（`github_command_admin_only`，默认开启）
+- 只有 `github_command_repos` 里显式列出的仓库才允许操作；**留空即全部拒绝**，
+  不会因为漏配就放开整账号权限
+- 需要配置具备对应仓库写权限的 `github_token`，未配置时直接拒绝并提示维护者
+- 请求路径由「校验过的仓库名 + 编号」拼出，不接受任何外部传入的 URL
+
+> 注：`/github` 同时注册了 `gh`、`merge`、`close`、`reopen`、`comment` 几个别名，
+> 因此 `/merge #12` 也可用；这类短别名与其他插件撞名的可能性更高，可按需改用完整写法。
+
 ### 使用 Prompt 示例
 
 在 `templates/` 目录中提供了预置的系统提示词：

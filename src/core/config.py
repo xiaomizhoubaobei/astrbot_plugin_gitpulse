@@ -10,11 +10,14 @@ from typing import Any, get_type_hints
 from astrbot.api import AstrBotConfig, logger
 
 from ..services.event_filter import parse_enabled_events
+from ..services.github_command_service import parse_repo_whitelist
 from ..services.repo_router import parse_repo_routes
 from .constants import (
     DEFAULT_BIND_HOST,
     DEFAULT_CODE_REVIEW_MAX_DIFF_CHARS,
+    DEFAULT_MERGE_METHOD,
     DEFAULT_WEBHOOK_PATH,
+    SUPPORTED_MERGE_METHODS,
 )
 
 # 仅允许普通的 URL 路径字符：排除空白、查询串、片段以及 aiohttp 的
@@ -112,6 +115,7 @@ class PluginConfig(ConfigNode):
     agent_system_prompt: str
     enable_code_review: bool
     github_token: str
+    enable_github_commands: bool
 
     @property
     def bind_host(self) -> str:
@@ -157,6 +161,42 @@ class PluginConfig(ConfigNode):
             value = 0
         return value if value > 0 else DEFAULT_CODE_REVIEW_MAX_DIFF_CHARS
 
+    @property
+    def github_command_admin_only(self) -> bool:
+        """群内写操作是否仅管理员可执行：缺省为 ``True``.
+
+        与 ``bind_host`` 相同，不做类型注解以免与 property 冲突。
+        这里不复用 ``ConfigNode`` 的零值兜底（会变成 ``False``）：写操作
+        具备真实影响，缺键时必须按「仅管理员」这一更严格的口径处理。
+        """
+        raw = self._data.get("github_command_admin_only")
+        return True if raw is None else bool(raw)
+
+    @cached_property
+    def command_repos(self) -> frozenset[str] | None:
+        """群内写操作的仓库授权列表（``github_command_repos`` 解析结果）.
+
+        ``None`` 表示未配置；调用方（``ensure_repo_allowed``）对 ``None``
+        与空集合一律拒绝——写操作必须由维护者显式授权仓库。
+        """
+        return parse_repo_whitelist(self._data.get("github_command_repos"))
+
+    @property
+    def github_command_default_repo(self) -> str:
+        """指令未写仓库时的默认仓库（``owner/repo``），未配置时为空白串.
+
+        与 ``bind_host`` 相同，不做类型注解以免与 property 冲突。
+        """
+        raw = self._data.get("github_command_default_repo")
+        return raw.strip() if isinstance(raw, str) else ""
+
+    @property
+    def github_command_merge_method(self) -> str:
+        """``/github merge`` 未指定合并方式时的默认值（非法值回落 squash）."""
+        raw = self._data.get("github_command_merge_method")
+        method = raw.strip().lower() if isinstance(raw, str) else ""
+        return method if method in SUPPORTED_MERGE_METHODS else DEFAULT_MERGE_METHOD
+
     @cached_property
     def enabled_events(self) -> frozenset[str] | None:
         """事件订阅白名单；``None`` 表示未配置，启用全部支持的事件."""
@@ -192,6 +232,23 @@ class PluginConfig(ConfigNode):
             f"  github_token: {'configured' if self.github_token else '(none)'}"
         )
         logger.info(f"  code_review_max_diff_chars: {self.code_review_max_diff_chars}")
+        logger.info(f"  enable_github_commands: {self.enable_github_commands}")
+        logger.info(f"  github_command_admin_only: {self.github_command_admin_only}")
+        allowed_repos = self.command_repos
+        logger.info(
+            "  github_command_repos: "
+            + (
+                ", ".join(sorted(allowed_repos))
+                if allowed_repos
+                else "(none - write commands will be refused)"
+            )
+        )
+        logger.info(
+            f"  github_command_default_repo: {self.github_command_default_repo or '(none)'}"
+        )
+        logger.info(
+            f"  github_command_merge_method: {self.github_command_merge_method}"
+        )
         logger.info(f"  rate_limit: {self.rate_limit} req/min")
         logger.info("=" * 60)
 

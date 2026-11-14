@@ -92,6 +92,28 @@ def _install_astrbot_stubs() -> None:
     setattr(api, "all", ModuleType("astrbot.api.all"))
     setattr(api, "message_components", ModuleType("astrbot.api.message_components"))
 
+    # astrbot.api.event：main.py 用 filter.command 注册群内指令，
+    # 桩只需提供「不改变函数对象」的装饰器与 AstrMessageEvent 占位类，
+    # 让入口模块可在纯净环境下被导入并被单测调用。
+    event_module = ModuleType("astrbot.api.event")
+
+    class _AstrMessageEvent:
+        """最小事件桩：仅作为类型占位，测试用自定义假事件替代."""
+
+    class _Filter:
+        """指令注册器桩：装饰后原样返回函数，便于直接调用 handler."""
+
+        @staticmethod
+        def command(*args, **kwargs):
+            def _decorator(func):
+                return func
+
+            return _decorator
+
+    filter_stub = _Filter()
+    setattr(event_module, "AstrMessageEvent", _AstrMessageEvent)
+    setattr(event_module, "filter", filter_stub)
+
     star = ModuleType("astrbot.api.star")
 
     class _Star:
@@ -120,9 +142,11 @@ def _install_astrbot_stubs() -> None:
     setattr(message_components, "Plain", _Plain)
 
     setattr(astrbot, "api", api)
+    setattr(api, "event", event_module)
     sys.modules["astrbot"] = astrbot
     sys.modules["astrbot.api"] = api
     sys.modules["astrbot.api.all"] = getattr(api, "all")
+    sys.modules["astrbot.api.event"] = event_module
     sys.modules["astrbot.api.star"] = star
     sys.modules["astrbot.api.message_components"] = message_components
 

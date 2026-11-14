@@ -55,6 +55,13 @@ main.py: PluginEntry（@register 注册的 AstrBot 入口）
        └─ 发送：context.send_message(<repo_routes 解析后的 UMO>)
             ├─ src/services/repo_router.py 解析 repo_routes（精确 → owner/* → * → target_umo）
             └─ enable_agent 时先经 src/services/llm_service.py 改写
+
+main.py: PluginEntry.github_command（@filter.command("github")）
+  └─ src/commands/github_command.py: run_github_command
+       ├─ parse_command_line          切出 action / target / extra
+       └─ src/services/github_command_service.py
+            ├─ ensure_repo_allowed   仓库白名单（留空即拒绝）
+            └─ merge / set_issue_state / create_issue_comment → GitHub REST
 ```
 
 请求处理顺序（`GitHubWebhookPlugin.handle_webhook`）：
@@ -77,7 +84,9 @@ main.py: PluginEntry（@register 注册的 AstrBot 入口）
 | 处理 | `src/handlers/` | payload → formatter 参数 |
 | 格式化 | `src/formatters/` | 纯函数，输出消息文本 |
 | 工具 | `src/utils/` | 限流器、签名校验 |
+| 指令 | `main.py` + `src/commands/` | 群内 `/github` 指令注册与执行编排（解析参数、调 API、生成回显） |
 | 服务 | `src/services/llm_service.py` | 调 `context.llm_generate`，超时用 `agent_timeout` |
+| 服务 | `src/services/github_command_service.py` | 群内指令的 GitHub REST 写操作与错误码 → 中文原因 |
 
 关键约定与易踩点：
 
@@ -89,6 +98,8 @@ main.py: PluginEntry（@register 注册的 AstrBot 入口）
 - **事件订阅**：`enabled_events` 由 `src/services/event_filter.py` 解析，留空表示全部启用；配置非法时返回空集合（禁用全部可订阅事件）而不是当作未配置，防止拼写错误意外放开全部事件。新增事件类型须同时加入 `SUPPORTED_EVENT_TYPES`、schema 提示与文档。`workflow_run` 只转发 `completed`，避免 CI 进行中状态刷屏。
 - **LLM 是可选增强**：任何 LLM 异常、空输出、超时，或输出丢失模板中的核心链接，都必须回落到模板消息，不能让 webhook 请求失败。
 - **测试约定**：测试用 `from src.xxx import ...`；formatter/常量这类纯逻辑直接单测，新增动作映射时同步补参数化用例。
+- **群内写指令必须显式授权**：`/github merge|close|reopen|comment` 会真实改动仓库，四道闸门缺一不可——① `enable_github_commands` 总开关；② `github_command_repos` 白名单（**留空即全部拒绝**，不要改成「未配置就放开」）；③ `github_command_admin_only`（默认 `true`，走 `event.is_admin()`）；④ `github_token` 必须具备目标仓库写权限。请求路径只能由「校验过的 `owner/repo` + 编号」拼出，禁止接受外部传入的 URL（SSRF）。错误码统一在 `github_command_service._STATUS_HINTS` 翻成中文，原始响应体与堆栈只进日志。
+- **指令 handler 不接受框架自动拆参**：`main.py` 的 `github_command` 只收 `event` 一个参数，正文与合并方式自行用 `parse_command_line` 切分——框架的自动拆参会把评论正文按空格切碎。`filter.command` 的别名是**静态注册**，是否放行由配置决定，不要试图运行时增删别名。
 
 ## 扩展方式
 

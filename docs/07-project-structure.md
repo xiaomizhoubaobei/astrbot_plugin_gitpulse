@@ -28,8 +28,12 @@ astrbot_plugin_gitpulse/
 │   │   ├── pull_request_formatter.py
 │   │   ├── push_formatter.py
 │   │   ├── release_formatter.py
+│   │   ├── github_command_formatter.py # 群内指令结果回显格式
 │   │   ├── star_formatter.py
 │   │   └── workflow_run_formatter.py
+│   ├── commands/              # 指令层（群内 GitHub 快捷指令）
+│   │   ├── __init__.py
+│   │   └── github_command.py  # 指令解析 + 调用编排 + 人话回显
 │   ├── utils/                 # 工具层
 │   │   ├── __init__.py
 │   │   ├── rate_limiter.py     # 请求速率限制器
@@ -38,6 +42,7 @@ astrbot_plugin_gitpulse/
 │       ├── __init__.py
 │       ├── diff_summary_service.py # AI 代码变更摘要（拉取 diff + LLM 总结）
 │       ├── event_filter.py     # enabled_events 订阅白名单解析
+│       ├── github_command_service.py # 群内指令：GitHub REST 写操作与错误映射
 │       ├── llm_service.py      # LLM 调用服务
 │       └── repo_router.py      # 多仓库路由（Repo -> UMO）
 ├── main.py                     # 插件入口文件（AstrBot 加载点）

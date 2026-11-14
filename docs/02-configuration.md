@@ -260,6 +260,61 @@ LLM 处理超时时间（秒）。
 - diff 响应体本身还有 512 KiB 的读取上限，超大 PR 不会撑爆内存
 - 调大可覆盖更完整的变更，但会增加 token 消耗和响应时间
 
+
+## 群内 GitHub 快捷指令
+
+这一组配置控制「在群里直接操作 GitHub」的能力。写操作具备真实影响，
+所有开关默认都偏保守。
+
+### enable_github_commands
+
+**类型**: `bool` | **默认值**: `false`
+
+是否启用群内快捷指令（`/github merge|close|reopen|comment`）。关闭时指令
+仍会响应，但只回一句「未启用」，不执行任何操作。
+
+### github_command_repos
+
+**类型**: `text` | **默认值**: `""`（即不允许任何仓库）
+
+允许群内写操作命中的仓库列表，是**唯一的授权来源**。
+
+```text
+owner/repo_a,owner/repo_b
+```
+
+也支持 JSON 数组：`["owner/repo_a", "owner/repo_b"]`。
+
+> ⚠️ 留空或全部条目非法时，**所有**写指令都会被拒绝。这是刻意设计：
+> `github_token` 往往覆盖整个账号，不能让「漏配」变成「全仓可写」。
+
+### github_command_default_repo
+
+**类型**: `string` | **默认值**: `""`
+
+指令里没写仓库时使用的默认仓库（`owner/repo`）。留空则必须写
+`owner/repo#编号`，否则回提示补全。
+
+### github_command_merge_method
+
+**类型**: `string` | **默认值**: `"squash"`
+
+`/github merge` 未指定方式时的默认合并策略，对应 GitHub 的 `merge_method`：
+`squash` / `merge` / `rebase`。配置成非法值时按 `squash` 处理。
+
+### github_command_admin_only
+
+**类型**: `bool` | **默认值**: `true`
+
+仅 AstrBot 管理员可执行写操作。关闭后群内任何成员都能触发，
+请同时用 `github_command_repos` 收敛可操作范围。
+
+### github_token（写操作部分）
+
+`github_token` 同时服务于 AI 变更摘要（读 diff）与群内快捷指令（写操作）。
+执行写操作时，Token 必须具备目标仓库的 `repo` 写权限；未配置 Token 时
+写指令会被直接拒绝并提示维护者。
+
 ## 配置类型说明
 
 AstrBot 配置系统支持以下类型：

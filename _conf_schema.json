@@ -93,7 +93,7 @@
     "description": "GitHub Token（可选）",
     "type": "string",
     "default": "",
-    "hint": "拉取 diff 用的 GitHub 只读 Token。公开仓库可留空（受 60 次/小时未认证限额约束）；私有仓库必须填写，且需具备该仓库的代码读取权限。Token 只用于访问 api.github.com。"
+    "hint": "GitHub Token。用于两类用途：① 拉取 diff 生成 AI 变更摘要（公开仓库可留空，受 60 次/小时未认证限额约束；私有仓库必须填写读取权限）；② 群内 GitHub 快捷指令的写操作（需 repos 写权限，未配置时写指令直接拒绝）。Token 只用于访问 api.github.com。"
   },
   "code_review_max_diff_chars": {
     "description": "送入 LLM 的 diff 字符上限",
@@ -105,5 +105,41 @@
     },
     "default": 12000,
     "hint": "diff 超过该长度时只截取前 N 个字符送给 LLM，避免长 PR 撑爆上下文。默认 12000。"
+  },
+  "enable_github_commands": {
+    "description": "启用群内 GitHub 快捷指令",
+    "type": "bool",
+    "default": false,
+    "hint": "启用后可在群内用 /github merge|close|reopen|comment <编号> 直接操作 GitHub，由插件调用 GitHub REST API 执行并回显结果。写操作具备真实影响，建议同时配置 github_command_repos 限定可操作仓库，并按需开启 github_command_admin_only。"
+  },
+  "github_command_repos": {
+    "description": "允许群内操作的仓库",
+    "type": "text",
+    "default": "",
+    "obvious_hint": true,
+    "hint": "必填才会放行写操作。逗号分隔或 JSON 数组，元素为 owner/repo（如 owner/repo_a,owner/repo_b）。留空表示不允许任何仓库，群内写指令会被拒绝。"
+  },
+  "github_command_default_repo": {
+    "description": "指令默认仓库",
+    "type": "string",
+    "default": "",
+    "hint": "群内指令未写明 owner/repo#编号 时使用的默认仓库（owner/repo）。留空则必须写全 owner/repo#编号。"
+  },
+  "github_command_merge_method": {
+    "description": "默认合并方式",
+    "type": "string",
+    "default": "squash",
+    "options": [
+      "squash",
+      "merge",
+      "rebase"
+    ],
+    "hint": "群内 /github merge 未指定方式时使用的合并策略，对应 GitHub merge_method。"
+  },
+  "github_command_admin_only": {
+    "description": "仅管理员可执行写操作",
+    "type": "bool",
+    "default": true,
+    "hint": "默认开启：只有 AstrBot 管理员可触发群内 GitHub 写指令，避免普通群成员误操作。关闭后群内任何人都能执行（请配合 github_command_repos 收敛范围）。"
   }
 }

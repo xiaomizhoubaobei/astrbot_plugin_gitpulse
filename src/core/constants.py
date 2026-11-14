@@ -44,6 +44,26 @@ MAX_DIFF_RESPONSE_BYTES = 512 * 1024
 # 单条摘要的输出上限，避免 LLM 长篇大论刷屏。
 MAX_SUMMARY_CHARS = 1000
 
+# GitHub REST API 根地址。diff 拉取与群内快捷指令共用同一常量，
+# 避免两处各自硬编码导致口径漂移。
+GITHUB_API_BASE = "https://api.github.com"
+
+# 群内 GitHub 快捷指令（merge / close / reopen / comment）的单次 API 超时（秒）。
+# 群聊场景对响应时延敏感，超时后直接回显失败原因，不让指令长时间挂起。
+GITHUB_COMMAND_TIMEOUT = 10.0
+
+# 群内 `/github comment` 单条评论正文上限（字符）。GitHub 本身允许更长，
+# 但群聊里贴超长正文既难读也容易被平台截断，故主动限制。
+MAX_COMMAND_COMMENT_CHARS = 500
+
+# PR 合并方式：与 GitHub REST API 的 merge_method 枚举一致。
+DEFAULT_MERGE_METHOD = "squash"
+SUPPORTED_MERGE_METHODS = frozenset({"merge", "squash", "rebase"})
+
+# Issue / PR 在 REST API 中的两种状态取值。
+ISSUE_STATE_OPEN = "open"
+ISSUE_STATE_CLOSED = "closed"
+
 # GitHub event types
 EVENT_TYPE_PUSH = "push"
 EVENT_TYPE_ISSUES = "issues"
