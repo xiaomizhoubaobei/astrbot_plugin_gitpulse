@@ -1,1 +1,1 @@
-"""AstrBot 指令编排模块（群内 GitHub 快捷指令）。"""
+"""AstrBot command orchestration modules for in-chat GitHub commands."""

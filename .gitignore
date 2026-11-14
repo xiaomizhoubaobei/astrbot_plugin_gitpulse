@@ -43,6 +43,13 @@ ENV/
 ai-audit/handoff-private*.pem
 handoff-private*.pem
 
+# 覆盖率数据文件（本地跑 coverage 时生成）
+.coverage
+.coverage.*
+
+# CNB PR 门禁现场生成的测试依赖清单（由 requirements-dev.txt 派生，不入库）
+.requirements-ci.txt
+
 # 本地 AstrBot 运行环境（源码克隆与运行时包，非本插件代码，不入库）
 # 注意：Linux 文件系统区分大小写，两个目录需分别忽略
 /AstrBot/

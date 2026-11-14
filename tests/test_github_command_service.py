@@ -167,7 +167,9 @@ async def test_merge_pull_request_success(monkeypatch):
     assert "squash" in outcome.detail
     assert "abcdef0" in outcome.detail
     assert captured["method"] == "PUT"
-    assert captured["url"] == service.GITHUB_API_BASE + "/repos/owner/repo/pulls/12/merge"
+    assert (
+        captured["url"] == service.GITHUB_API_BASE + "/repos/owner/repo/pulls/12/merge"
+    )
     assert captured["json"] == {"merge_method": "squash"}
     assert captured["headers"]["Authorization"] == "Bearer t0ken"
 
@@ -211,7 +213,8 @@ async def test_set_issue_state_close_marks_pull_request(monkeypatch):
     captured = _patch_session(
         monkeypatch,
         _FakeResponse(
-            200, '{"html_url": "https://github.com/owner/repo/pull/12", "pull_request": {}}'
+            200,
+            '{"html_url": "https://github.com/owner/repo/pull/12", "pull_request": {}}',
         ),
     )
 

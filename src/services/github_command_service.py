@@ -161,9 +161,7 @@ def parse_target(raw: str, default_repo: str = "") -> tuple[str, int]:
 
     match = _NUMBER_PATTERN.fullmatch(number_part.strip())
     if not match:
-        raise CommandError(
-            f"编号不合法：{raw}，应为 12、#12 或 owner/repo#12 形式"
-        )
+        raise CommandError(f"编号不合法：{raw}，应为 12、#12 或 owner/repo#12 形式")
     number = int(match.group(1))
     if number <= 0:
         raise CommandError("编号必须为正整数")
@@ -250,7 +248,9 @@ async def _request(
                 text = await response.text()
                 status = response.status
     except Exception as exc:  # 网络/超时：只告警，由调用方回显人话
-        logger.warning(f"GitHub Webhook: GitHub API request failed ({method} {url}): {exc}")
+        logger.warning(
+            f"GitHub Webhook: GitHub API request failed ({method} {url}): {exc}"
+        )
         return 0, None
 
     if not text:
@@ -280,7 +280,9 @@ async def merge_pull_request(
     )
 
     if status == 0:
-        return CommandOutcome(ok=False, error="请求 GitHub 失败（网络异常或超时），请稍后重试")
+        return CommandOutcome(
+            ok=False, error="请求 GitHub 失败（网络异常或超时），请稍后重试"
+        )
     if status != 200:
         logger.warning(
             f"GitHub Webhook: Merge {repo}#{number} failed with HTTP {status}"
@@ -314,7 +316,9 @@ async def set_issue_state(
     )
 
     if status == 0:
-        return CommandOutcome(ok=False, error="请求 GitHub 失败（网络异常或超时），请稍后重试")
+        return CommandOutcome(
+            ok=False, error="请求 GitHub 失败（网络异常或超时），请稍后重试"
+        )
     if status != 200:
         logger.warning(
             f"GitHub Webhook: {action} {repo}#{number} failed with HTTP {status}"
@@ -343,7 +347,9 @@ async def create_issue_comment(
     )
 
     if status == 0:
-        return CommandOutcome(ok=False, error="请求 GitHub 失败（网络异常或超时），请稍后重试")
+        return CommandOutcome(
+            ok=False, error="请求 GitHub 失败（网络异常或超时），请稍后重试"
+        )
     if status not in (200, 201):
         logger.warning(
             f"GitHub Webhook: Comment {repo}#{number} failed with HTTP {status}"

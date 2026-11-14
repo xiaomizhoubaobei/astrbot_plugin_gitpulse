@@ -94,5 +94,13 @@ main:
               image: docker.cnb.cool/xmzzuzhi/cnb-docker/python:0.0.1
               script:
                 - python -m pip install -U pip
-                - pip install -r requirements-dev.txt
+                # 门禁只跑单测，不装 coverage：覆盖率由 GitHub Actions 负责
+                # （AGENTS.md §10.8.3），且镜像源对 coverage 的 wheel 曾偶发
+                # 返回 403，会让本门禁因外部源抖动而误红（见 PR #99）。
+                # 这里从同一份清单里剔除 coverage 再安装，避免测试工具版本
+                # 在 .cnb.yml 与 requirements-dev.txt 两处漂移。
+                # 生成到仓库根（不是 /tmp）：清单里的 `-r requirements.txt`
+                # 由 pip 按「所在文件目录」解析，落到 /tmp 会解析失败。
+                - sed '/^coverage/d' requirements-dev.txt > .requirements-ci.txt
+                - pip install --retries 5 --timeout 60 -r .requirements-ci.txt
                 - python -m pytest tests -q
