@@ -30,11 +30,12 @@
 #
 # 触发设计：
 #   - workflow_run：监听 CodeQL.yml（name: "代码质量分析"）的 completed 事件。
-#     仅接受**默认分支（main）**上的运行（`on.workflow_run.branches`）：本审计
-#     消费仓库当前 open 的 CodeQL 告警，与具体 PR 无关；若 PR 分支扫描也各自
-#     触发，会按 PR 数量堆积在串行队列里。随后再校验上游运行成功、且 head 仓库
-#     属于**本仓库**（非 fork）才进入 triage（见 jobs.triage.if），从源头掐断
-#     fork 源码流入。
+#     仅接受**默认分支（main）**上的运行（`on.workflow_run.branches`），且 gate
+#     job 进一步要求上游事件为 **push**、head 仓库为本仓库（非 fork）、并且本次
+#     变更命中 **src/**，才放行 triage / publish。定时扫描（head 未变化）与纯
+#     文档变更不会触发审计，避免按 PR / 定时任务数量堆积在串行队列里。
+#     `workflow_run` 本身不支持 `paths`，故 paths 判断在 gate job 内用 compare API
+#     完成；无法确定时 fail-open（宁可多跑一次，不漏审）。
 #   - workflow_dispatch：保留手动触发以便首次部署验证，但**不得**让任意分支的源码
 #     流入持有 GH_PAT 的 publish job。威胁：手动触发会以「所选 ref 的源码」运行，
 #     若允许在任意分支/任意 ref 上触发，等于任何有 workflow 运行权限的人都可拿一个
@@ -131,6 +132,83 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # Job 0：src 变更门禁（只有 main 上涉及 src/ 的 push 才进入审计）
+  # ---------------------------------------------------------------------------
+  # `workflow_run` 不支持 `paths` 过滤，故用一次轻量 API 调用判断：取本次
+  # CodeQL 运行与「上一次成功的 CodeQL 运行」之间的 compare 文件列表，只有
+  # 命中 `src/` 才放行。定时扫描（同一 head）与纯文档变更都会在此被跳过，
+  # 不进入持有 AI_API_TOKEN 的 triage job。
+  gate:
+    name: 判断是否涉及 src 变更
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      src_changed: ${{ steps.detect.outputs.src_changed }}
+    # 门禁（前移到本 job，未命中时 triage / publish 都不会启动）：
+    #   1) 手动触发需落在**默认分支**上才放行（配合 triage 固定默认分支 checkout）；
+    #   2) workflow_run 只接受 main 上的 **push**（定时扫描没有源码变更，
+    #      PR 分支扫描与仓库级审计无关）；
+    #   3) 上游 CodeQL 必须成功完成，且 head 仓库必须是本仓库（排除 fork）；
+    #   4) 变更文件必须命中 src/（无法确定时 fail-open，宁可多跑不漏审）。
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == github.event.repository.default_branch &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    steps:
+      # 只读出站加固运行器（audit 模式：记录所有出站调用，便于事后审计）
+      - name: 加固运行器（审计所有出站调用）
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+
+      - name: 判断本次运行是否涉及 src/
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+        run: |
+          set -euo pipefail
+          # 手动触发始终放行，便于部署验证与按需重跑。
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "src_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # fail-open：只有明确确认「未触及 src/」时才跳过审计。
+          changed=true
+          prev_sha="$(gh api \
+            "repos/${REPO}/actions/workflows/${WORKFLOW_ID}/runs?branch=${DEFAULT_BRANCH}&per_page=50" \
+            --jq "[.workflow_runs[] | select(.id < ${RUN_ID}) | select(.conclusion == \"success\") | .head_sha] | first // empty" \
+            2>/dev/null || true)"
+          if [ -n "${prev_sha}" ]; then
+            if [ "${prev_sha}" = "${HEAD_SHA}" ]; then
+              # 典型场景：定时扫描，head 未变化，无需重复审计。
+              changed=false
+            else
+              # 同时看 filename 与 previous_filename，避免「从 src/ 移出」的重命名漏判。
+              files="$(gh api \
+                "repos/${REPO}/compare/${prev_sha}...${HEAD_SHA}" \
+                --jq '.files[]? | .filename, (.previous_filename // empty)' \
+                2>/dev/null || true)"
+              if [ -n "${files}" ] && ! printf '%s\n' "${files}" | grep -q '^src/'; then
+                changed=false
+              fi
+            fi
+          fi
+          echo "src_changed=${changed}" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
   # Job 1：审计（无仓库写凭据、不接触 GH_PAT）
   # ---------------------------------------------------------------------------
   # 这是「不可信输入」与「高权限动作」之间的隔离墙：本 job 只做只读分析，
@@ -139,27 +217,15 @@ jobs:
   #    GITHUB_TOKEN（读 CodeQL 告警）；应准确表述为「**不持仓库写凭据**」。
   triage:
     name: 审计分流（无仓库写凭据）
+    # 事件/分支/仓库/失败状态与 src 变更门禁均在 gate job 判定；未命中时
+    # 整个审计 job（含 AI_API_TOKEN）不会启动。
+    needs: gate
+    if: needs.gate.outputs.src_changed == 'true'
     runs-on: ubuntu-latest
     permissions:
       # 只读：足够读取 CodeQL 告警与仓库内容；本 job 不持有任何仓库写凭据。
       contents: read
       security-events: read
-    # 门禁：
-    #   1) 手动触发需落在**默认分支**上才放行（配合下方 checkout 固定默认分支，
-    #      即便手选其它分支，执行的 triage 源码仍是已合并的可信代码）；
-    #   2) workflow_run 需上游 CodeQL 成功完成（避免失败/取消的过期扫描状态）；
-    #   3) 【安全关键】上游运行的 head 仓库必须是本仓库，即 fork PR 触发的
-    #      CodeQL 运行**一律不进入本工作流**，杜绝 PR 源码充当不可信输入；
-    #   4) workflow_run 只接受**默认分支**上的运行（on.workflow_run.branches
-    #      过滤的纵深防御）：PR 分支的扫描不触发仓库级审计，避免按 PR 数量
-    #      堆积在 concurrency 队列里。
-    if: >-
-      (github.event_name == 'workflow_dispatch' &&
-       github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == github.event.repository.default_branch &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
     steps:
       # 只读出站加固运行器（audit 模式：记录所有出站调用，便于事后审计）
       - name: 加固运行器（审计所有出站调用）

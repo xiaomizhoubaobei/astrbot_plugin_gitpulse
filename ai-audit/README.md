@@ -238,10 +238,11 @@ hatch run main -t ai_audit.alert_triage_example \
 
 本仓库已随附 `.github/workflows/ai-audit-scheduled.yml`，配置好所需 Secrets 后即可自动（或手动）运行 AI 审计：
 
-- **自动触发**：默认监听 `CodeQL.yml`（name: `代码质量分析`）的 `completed` 事件，
-  且只接受**默认分支（main）**上的 CodeQL 运行；PR 分支的扫描不触发仓库级审计，
-  避免每个 PR 都排一轮串行队列。CodeQL 在 main 上扫完后确定性地运行，保证消费
-  最新告警；同时保留 `workflow_dispatch` 手动触发。
+- **自动触发**：监听 `CodeQL.yml`（name: `代码质量分析`）的 `completed` 事件，
+  且只在 **main 分支的 push 且变更涉及 `src/`** 时进入审计。`workflow_run` 不支持
+  `paths` 过滤，工作流用 gate job 对比上一次成功运行，确认 diff 命中 `src/` 后才
+  启动 triage / publish；PR 分支、定时扫描与纯文档变更都不会触发审计。
+  同时保留 `workflow_dispatch` 手动触发。
   🔒 **fork 门禁**：仅当上游运行的 `head_repository` 为本仓库时才进入审计，fork PR 触发的
   CodeQL 运行一律跳过，从源头杜绝把 PR 源码当作不可信输入送进审计链。
 - **手动触发**：在仓库 **Actions → AI 审计（CodeQL 完成后自动分流）→ Run workflow** 手动跑一次用于验证。
