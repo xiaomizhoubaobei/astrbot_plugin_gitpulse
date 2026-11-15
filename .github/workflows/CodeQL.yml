@@ -39,10 +39,10 @@ jobs:
       matrix:
         language: [ 'python' ]
         os: [ 'ubuntu-latest' ]
-        # 单版本工作流，与测试矩阵（coverage.yml）的起始版本对齐到 3.12。
-        # ⚠️ 本仓库声明 Python 3.12+（见 .pre-commit-config.yaml 的 --target-version py312），
-        #    故此处**不得**照搬上游模板的 3.13；升版本时与 coverage.yml 矩阵同源修改。
-        python-version: [ '3.12' ]
+        # 单版本工作流，与测试矩阵（coverage.yml）的起始版本对齐到 3.13。
+        # ⚠️ 本仓库声明 Python 3.13+（见 .pre-commit-config.yaml 的 --target-version py313），
+        #    故此处取 3.13；升版本时与 coverage.yml 矩阵同源修改。
+        python-version: [ '3.13' ]
 
     steps:
     - name: 加固运行器（审计所有出站调用）

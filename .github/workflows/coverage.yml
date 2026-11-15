@@ -26,13 +26,13 @@ jobs:
   coverage:
     name: 单元测试与覆盖率 (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    # 测试矩阵：本仓库声明 Python 3.12+，逐版本覆盖以尽早暴露版本相关差异。
+    # 测试矩阵：本仓库声明 Python 3.13+，逐版本覆盖以尽早暴露版本相关差异。
     # 与 CodeQL / 依赖审计的 python-version 口径同源，升版本时一并修改。
     # fail-fast: false —— 某一版本失败不该掩盖其它版本的结论。
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13", "3.14"]
+        python-version: ["3.13", "3.14", "3.15"]
     # 令牌经 job 级 env 暴露给步骤条件表达式（secrets 不能直接写在 if 中），
     # 从而在 token 为空时安全跳过上报步骤。
     env:
@@ -83,11 +83,11 @@ jobs:
 
       # 上报 Codecov：仅在拿到 token（仓库 Secret 或同名 CNB 密钥）时执行。
       # 未配置 token 时跳过上报，仅留存 coverage.xml 工件，不使 CI 失败。
-      # ⚠️ 仅矩阵首版本（3.12）上报：多版本重复上报同一份源码的覆盖率没有增量信息，
+      # ⚠️ 仅矩阵首版本（3.13）上报：多版本重复上报同一份源码的覆盖率没有增量信息，
       #    只会让 Codecov 侧互相覆盖、徽章抖动；其余版本负责「跑通」这一结论。
       - name: 上报覆盖率到 Codecov
         id: codecov
-        if: ${{ always() && matrix.python-version == '3.12' && env.CODECOV_TOKEN != '' }}
+        if: ${{ always() && matrix.python-version == '3.13' && env.CODECOV_TOKEN != '' }}
         continue-on-error: true
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         env:
@@ -100,7 +100,7 @@ jobs:
         with:
           files: ./coverage.xml
           flags: unittests
-          name: python-3.12
+          name: python-3.13
           fail_ci_if_error: false
           verbose: true
 
@@ -108,7 +108,7 @@ jobs:
       # 与 security-scan.yml / Scorecard.yml 保持一致（v7 起运行时为 node24，
       # 新增可选的 archive 直传能力；本步骤仍走默认 zip 归档，参数量级极小）。
       - name: 上传覆盖率报告工件
-        if: always() && matrix.python-version == '3.12'
+        if: always() && matrix.python-version == '3.13'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-xml

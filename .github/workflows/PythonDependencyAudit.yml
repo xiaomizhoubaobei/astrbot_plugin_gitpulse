@@ -24,9 +24,9 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         # 逐版本审计，确保每个版本上的依赖解析与漏洞结论都被覆盖。
-        # 矩阵与单测矩阵（coverage.yml）保持一致：本仓库声明 Python 3.12+，
-        # 故审计下限取 3.12；升版本时与 coverage.yml 矩阵同源修改。
-        python-version: ['3.12', '3.13', '3.14']
+        # 矩阵与单测矩阵（coverage.yml）保持一致：本仓库声明 Python 3.13+，
+        # 故审计下限取 3.13；升版本时与 coverage.yml 矩阵同源修改。
+        python-version: ['3.13', '3.14', '3.15']
     runs-on: ${{ matrix.os }}
     name: 审计在 ${{ matrix.os }} 上使用 Python ${{ matrix.python-version }}
 

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概览
 
-GitPulse 是一个 **AstrBot 插件**（Python 3.12+），用于接收 GitHub Webhook（`push` / `issues` / `pull_request` / `release` / `workflow_run` / `star` / `watch` / `issue_comment` / `ping`），格式化为聊天消息后转发到 AstrBot 指定会话；可选通过 AstrBot 的 LLM 能力改写消息。插件不是独立进程——由 AstrBot 加载后，自己启动一个 aiohttp HTTP 服务监听配置路径 `webhook_path`（默认 `/webhook`）。
+GitPulse 是一个 **AstrBot 插件**（Python 3.13+），用于接收 GitHub Webhook（`push` / `issues` / `pull_request` / `release` / `workflow_run` / `star` / `watch` / `issue_comment` / `ping`），格式化为聊天消息后转发到 AstrBot 指定会话；可选通过 AstrBot 的 LLM 能力改写消息。插件不是独立进程——由 AstrBot 加载后，自己启动一个 aiohttp HTTP 服务监听配置路径 `webhook_path`（默认 `/webhook`）。
 
 **`AGENTS.md` 是只读的历史工程规范，禁止修改**（提交信息、GPG 强制签名、PR 流程、CI 口径等仍可参考）；工程约定如有更新，一律写入本文件 `CLAUDE.md`，两者冲突时以本文件为准。
 
@@ -185,6 +185,6 @@ curl -sS -X PATCH \
 
 ## CI 概览
 
-- `.github/workflows/coverage.yml`：push/PR 到 `main` 时在 Python 3.12/3.13/3.14 上跑测试，`--source=src` 统计覆盖率，仅 3.12 上报 Codecov（`codecov.yml`，项目/补丁门禁均为 informational）。
+- `.github/workflows/coverage.yml`：push/PR 到 `main` 时在 Python 3.13/3.14/3.15 上跑测试，`--source=src` 统计覆盖率，仅 3.13 上报 Codecov（`codecov.yml`，项目/补丁门禁均为 informational）。
 - 其余 GitHub Actions：CodeQL、Bandit/DevSkim/trufflehog 安全扫描、依赖审计、Scorecard，以及 `ai-audit-scheduled.yml`（CodeQL 完成后用 LLM 分流告警，`triage`/`publish` 两段式隔离令牌）。
 - CNB 侧 `.cnb.yml` 只负责开发容器与把 `main` 同步到 GitHub 镜像，不做覆盖率上报。
