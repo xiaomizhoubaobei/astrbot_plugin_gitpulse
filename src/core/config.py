@@ -14,6 +14,7 @@ from ..services.github_command_service import parse_repo_whitelist
 from ..services.repo_router import parse_repo_routes
 from .constants import (
     DEFAULT_BIND_HOST,
+    DEFAULT_CI_FAILURE_MAX_LOG_CHARS,
     DEFAULT_CODE_REVIEW_MAX_DIFF_CHARS,
     DEFAULT_MERGE_METHOD,
     DEFAULT_WEBHOOK_PATH,
@@ -114,6 +115,7 @@ class PluginConfig(ConfigNode):
     agent_timeout: int
     agent_system_prompt: str
     enable_code_review: bool
+    enable_ci_failure_analysis: bool
     github_token: str
     enable_github_commands: bool
 
@@ -160,6 +162,24 @@ class PluginConfig(ConfigNode):
         except (TypeError, ValueError):
             value = 0
         return value if value > 0 else DEFAULT_CODE_REVIEW_MAX_DIFF_CHARS
+
+    @property
+    def ci_failure_max_log_chars(self) -> int:
+        """送入 LLM 的 CI 失败日志字符上限：未配置或非法时回落默认值.
+
+        与 ``bind_host`` 相同，不做类型注解以免与 property 冲突。
+        """
+        try:
+            value = int(self._data.get("ci_failure_max_log_chars"))
+        except (TypeError, ValueError):
+            value = 0
+        return value if value > 0 else DEFAULT_CI_FAILURE_MAX_LOG_CHARS
+
+    @property
+    def ci_failure_system_prompt(self) -> str:
+        """CI 失败归因的系统提示词；留空时由服务层使用内置默认值."""
+        raw = self._data.get("ci_failure_system_prompt")
+        return raw.strip() if isinstance(raw, str) else ""
 
     @property
     def github_command_admin_only(self) -> bool:
@@ -232,6 +252,10 @@ class PluginConfig(ConfigNode):
             f"  github_token: {'configured' if self.github_token else '(none)'}"
         )
         logger.info(f"  code_review_max_diff_chars: {self.code_review_max_diff_chars}")
+        logger.info(f"  enable_ci_failure_analysis: {self.enable_ci_failure_analysis}")
+        logger.info(f"  ci_failure_max_log_chars: {self.ci_failure_max_log_chars}")
+        ci_prompt_length = len(self.ci_failure_system_prompt)
+        logger.info(f"  ci_failure_system_prompt: {ci_prompt_length} chars")
         logger.info(f"  enable_github_commands: {self.enable_github_commands}")
         logger.info(f"  github_command_admin_only: {self.github_command_admin_only}")
         allowed_repos = self.command_repos

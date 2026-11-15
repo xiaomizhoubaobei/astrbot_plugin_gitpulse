@@ -290,6 +290,29 @@ GitHub 在配置 Webhook 时会自动发送 Ping 事件，插件会自动响应�
 
 > 摘要链路只从 `api.github.com` 拉取 diff，仓库名与提交 SHA 会先做白名单校验，不接受 payload 中的任意 URL。
 
+### CI 失败智能归因
+
+开启 `enable_ci_failure_analysis` 并配置具备 `actions:read` 权限的 `github_token` 后，`workflow_run` 以 `failure` / `timed_out` / `startup_failure` 结束时，插件会抓取失败 job 的日志尾部，调用 LLM 分析根因，并作为独立消息紧随事件通知之后推送：
+
+```
+🤖 CI 失败归因
+📦 owner/repo · CI · failure
+最可能的原因是构建环境缺少新增依赖。
+- 日志末尾出现 `ModuleNotFoundError: No module named 'xyz'`，建议把 xyz 加入依赖清单。
+- 失败步骤为 Run tests，可先在本地复现该导入错误。
+📎 https://github.com/owner/repo/actions/runs/123
+```
+
+特点：
+
+- 只分析失败结论（`failure` / `timed_out` / `startup_failure`），`cancelled` / `skipped` 等不会触发
+- 最多分析 3 个失败 job；日志只取尾部，送入 LLM 前按 `ci_failure_max_log_chars` 截断
+- 进入 LLM 前会对常见 Token / 密码 / 私钥格式做尽力脱敏
+- 归因失败（无 Token、无 LLM Provider、GitHub API 或 LLM 异常）只跳过归因，不影响原有模板消息
+- `github_token` 未配置时直接跳过；私有仓库必须提供具备 `actions:read` 的 Token
+
+> 链路只从 `api.github.com` 拉取 jobs / 日志，仓库名与 run、job 编号会先做校验；跟随日志签名地址时不携带 Token。
+
 ### 群内 GitHub 快捷指令
 
 开启 `enable_github_commands` 后，可以直接在群里操作 GitHub，无需切到网页：

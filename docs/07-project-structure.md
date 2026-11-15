@@ -28,6 +28,7 @@ astrbot_plugin_gitpulse/
 │   │   ├── pull_request_formatter.py
 │   │   ├── push_formatter.py
 │   │   ├── release_formatter.py
+│   │   ├── ci_failure_formatter.py # CI 失败归因卡片格式
 │   │   ├── github_command_formatter.py # 群内指令结果回显格式
 │   │   ├── star_formatter.py
 │   │   └── workflow_run_formatter.py
@@ -40,6 +41,7 @@ astrbot_plugin_gitpulse/
 │   │   └── verify_signature.py # Webhook 签名验证
 │   └── services/              # 业务服务层
 │       ├── __init__.py
+│       ├── ci_failure_service.py # CI 失败归因（抓取失败日志 + LLM 分析）
 │       ├── diff_summary_service.py # AI 代码变更摘要（拉取 diff + LLM 总结）
 │       ├── event_filter.py     # enabled_events 订阅白名单解析
 │       ├── github_command_service.py # 群内指令：GitHub REST 写操作与错误映射

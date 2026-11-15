@@ -11,6 +11,7 @@ import aiohttp
 import pytest
 
 import src.core.plugin as plugin_module
+import src.services.ci_failure_service as ci_failure_service
 import src.services.diff_summary_service as diff_summary_service
 import src.services.llm_service as llm_service
 from src.core.config import normalize_webhook_path
@@ -680,6 +681,199 @@ async def test_code_review_exception_keeps_template_message(monkeypatch):
         ["template-message"]
     ]
     assert plugin._background_tasks == set()
+
+
+def _workflow_payload(conclusion="failure"):
+    """构造 workflow_run 完成事件 payload."""
+    return {
+        "action": "completed",
+        "repository": {"full_name": "owner/repo"},
+        "workflow_run": {
+            "id": 123,
+            "name": "CI",
+            "conclusion": conclusion,
+            "head_branch": "main",
+            "event": "push",
+            "html_url": "https://github.com/owner/repo/actions/runs/123",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_ci_failure_analysis_sent_after_template(monkeypatch):
+    """启用 CI 归因时，模板消息之后追加一张独立的归因卡片."""
+    analysis_calls = []
+
+    async def fake_analysis(plugin_instance, data):
+        analysis_calls.append((plugin_instance, data))
+        return "根因：缺少依赖\n- 安装 requirements.txt"
+
+    async def fake_handler(data, ctx):
+        return "template-message"
+
+    monkeypatch.setattr(plugin_module, "handle_workflow_run_event", fake_handler)
+    monkeypatch.setattr(ci_failure_service, "analyze_workflow_failure", fake_analysis)
+    context = _FakeContext()
+    plugin = _make_plugin(context, enable_ci_failure_analysis=True)
+    payload = _workflow_payload()
+
+    response = await plugin.handle_webhook(
+        _request("workflow_run", json.dumps(payload).encode("utf-8"))
+    )
+    await plugin.wait_for_background_tasks()
+
+    assert response.status == 200
+    assert analysis_calls == [(plugin, payload)]
+    assert [
+        (umo, [component.text for component in chain.components])
+        for umo, chain in context.sent
+    ] == [
+        ("test:GroupMessage:1", ["template-message"]),
+        (
+            "test:GroupMessage:1",
+            [
+                "🤖 CI 失败归因\n"
+                "📦 owner/repo · CI · failure\n"
+                "根因：缺少依赖\n"
+                "- 安装 requirements.txt\n"
+                "📎 https://github.com/owner/repo/actions/runs/123"
+            ],
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ci_failure_analysis_disabled_skips_service(monkeypatch):
+    """未启用 CI 归因时不调用归因服务."""
+    calls = []
+
+    async def fake_analysis(plugin_instance, data):
+        calls.append(data)
+        return "根因"
+
+    async def fake_handler(data, ctx):
+        return "template-message"
+
+    monkeypatch.setattr(plugin_module, "handle_workflow_run_event", fake_handler)
+    monkeypatch.setattr(ci_failure_service, "analyze_workflow_failure", fake_analysis)
+    context = _FakeContext()
+    plugin = _make_plugin(context, enable_ci_failure_analysis=False)
+
+    await plugin.handle_webhook(
+        _request("workflow_run", json.dumps(_workflow_payload()).encode("utf-8"))
+    )
+    await plugin.wait_for_background_tasks()
+
+    assert calls == []
+    assert len(context.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_ci_failure_analysis_skips_when_repo_muted(monkeypatch):
+    """仓库被路由静音时不拉日志、不调 LLM."""
+    calls = []
+
+    async def fake_analysis(plugin_instance, data):
+        calls.append(data)
+        return "根因"
+
+    async def fake_handler(data, ctx):
+        return "template-message"
+
+    monkeypatch.setattr(plugin_module, "handle_workflow_run_event", fake_handler)
+    monkeypatch.setattr(ci_failure_service, "analyze_workflow_failure", fake_analysis)
+    context = _FakeContext()
+    plugin = _make_plugin(
+        context,
+        enable_ci_failure_analysis=True,
+        repo_routes='{"owner/repo": []}',
+        target_umo="fallback",
+    )
+
+    await plugin.handle_webhook(
+        _request("workflow_run", json.dumps(_workflow_payload()).encode("utf-8"))
+    )
+    await plugin.wait_for_background_tasks()
+
+    assert calls == []
+    assert context.sent == []
+
+
+@pytest.mark.asyncio
+async def test_ci_failure_analysis_none_keeps_template(monkeypatch):
+    """归因返回 None 时只发送模板消息."""
+
+    async def fake_analysis(plugin_instance, data):
+        return None
+
+    async def fake_handler(data, ctx):
+        return "template-message"
+
+    monkeypatch.setattr(plugin_module, "handle_workflow_run_event", fake_handler)
+    monkeypatch.setattr(ci_failure_service, "analyze_workflow_failure", fake_analysis)
+    context = _FakeContext()
+    plugin = _make_plugin(context, enable_ci_failure_analysis=True)
+
+    await plugin.handle_webhook(
+        _request("workflow_run", json.dumps(_workflow_payload()).encode("utf-8"))
+    )
+    await plugin.wait_for_background_tasks()
+
+    assert [[c.text for c in chain.components] for _, chain in context.sent] == [
+        ["template-message"]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ci_failure_analysis_exception_keeps_template(monkeypatch):
+    """归因服务抛异常时模板消息已发出，后台任务正常收敛."""
+
+    async def fake_analysis(plugin_instance, data):
+        raise RuntimeError("analysis boom")
+
+    async def fake_handler(data, ctx):
+        return "template-message"
+
+    monkeypatch.setattr(plugin_module, "handle_workflow_run_event", fake_handler)
+    monkeypatch.setattr(ci_failure_service, "analyze_workflow_failure", fake_analysis)
+    context = _FakeContext()
+    plugin = _make_plugin(context, enable_ci_failure_analysis=True)
+
+    await plugin.handle_webhook(
+        _request("workflow_run", json.dumps(_workflow_payload()).encode("utf-8"))
+    )
+    await plugin.wait_for_background_tasks()
+
+    assert [[c.text for c in chain.components] for _, chain in context.sent] == [
+        ["template-message"]
+    ]
+    assert plugin._background_tasks == set()
+
+
+@pytest.mark.asyncio
+async def test_ci_failure_analysis_ignores_non_workflow_events(monkeypatch):
+    """非 workflow_run 事件即使开启开关也不调用归因服务."""
+    calls = []
+
+    async def fake_analysis(plugin_instance, data):
+        calls.append(data)
+        return "根因"
+
+    async def fake_handler(data, ctx):
+        return "template-message"
+
+    monkeypatch.setattr(plugin_module, "handle_push_event", fake_handler)
+    monkeypatch.setattr(ci_failure_service, "analyze_workflow_failure", fake_analysis)
+    context = _FakeContext()
+    plugin = _make_plugin(context, enable_ci_failure_analysis=True)
+
+    await plugin.handle_webhook(
+        _request("push", json.dumps({"ref": "refs/heads/main"}).encode("utf-8"))
+    )
+    await plugin.wait_for_background_tasks()
+
+    assert calls == []
+    assert len(context.sent) == 1
 
 
 @pytest.mark.asyncio

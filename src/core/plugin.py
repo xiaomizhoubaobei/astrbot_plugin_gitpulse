@@ -240,6 +240,8 @@ class GitHubWebhookPlugin(Star):
             # 摘要作为独立消息追加：模板/LLM 改写消息已经发出，
             # 摘要失败不会影响主消息，也不会让 webhook 请求失败。
             await self._send_code_review_summary(event_type, data, target_umos)
+            # CI 失败归因同样作为独立消息追加，失败时静默跳过。
+            await self._send_ci_failure_analysis(event_type, data, target_umos)
         except Exception as e:
             logger.error(f"GitHub Webhook: Error processing event: {e}", exc_info=True)
 
@@ -263,6 +265,45 @@ class GitHubWebhookPlugin(Star):
             return
         if summary:
             await self.send_message(f"🤖 AI 变更摘要\n{summary}", target_umos)
+
+    async def _send_ci_failure_analysis(
+        self, event_type: str, data: dict, target_umos: list[str]
+    ):
+        """为失败的 workflow_run 追加 AI 归因卡片；失败时静默跳过."""
+        if event_type != EVENT_TYPE_WORKFLOW_RUN:
+            return
+        if not self.cfg.enable_ci_failure_analysis or not target_umos:
+            return
+
+        try:
+            from ..formatters.ci_failure_formatter import format_ci_failure_card
+            from ..services.ci_failure_service import analyze_workflow_failure
+
+            analysis = await analyze_workflow_failure(self, data)
+        except Exception as e:
+            logger.error(
+                f"GitHub Webhook: CI failure analysis failed unexpectedly: {e}",
+                exc_info=True,
+            )
+            return
+        if not analysis:
+            return
+
+        workflow_run = data.get("workflow_run")
+        if not isinstance(workflow_run, dict):
+            workflow_run = {}
+        repository = data.get("repository")
+        if not isinstance(repository, dict):
+            repository = {}
+
+        card = format_ci_failure_card(
+            repo_name=repository.get("full_name", "Unknown"),
+            workflow_name=workflow_run.get("name", ""),
+            conclusion=workflow_run.get("conclusion", ""),
+            analysis=analysis,
+            run_url=workflow_run.get("html_url", ""),
+        )
+        await self.send_message(card, target_umos)
 
     async def _format_event(self, event_type: str, data: dict) -> str | None:
         """按事件类型调用对应 handler 生成模板消息."""

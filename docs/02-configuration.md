@@ -244,11 +244,12 @@ LLM 处理超时时间（秒）。
 
 **类型**: `string` | **默认值**: `""` (可选)
 
-拉取 diff 使用的 GitHub 只读 Token。
+AI 摘要、群内快捷指令与 CI 失败归因共用的 GitHub Token。
 
-- 公开仓库可留空，但受 GitHub 未认证 API 限额（约 60 次/小时）约束
-- 私有仓库必须填写，且需具备对应仓库的代码读取权限
-- Token 只会发送到 `api.github.com`，不会随消息内容外泄
+- 拉取 diff（`enable_code_review`）：公开仓库可留空，但受 GitHub 未认证 API 限额（约 60 次/小时）约束；私有仓库必须填写代码读取权限
+- 群内写指令（`enable_github_commands`）：需要 `repos` 写权限，未配置时写指令直接拒绝
+- CI 失败归因（`enable_ci_failure_analysis`）：需要 `actions:read`，未配置时跳过归因
+- Token 只会发送到 `api.github.com`；跟随 Actions 日志签名地址时不携带 Token
 
 ### code_review_max_diff_chars
 
@@ -259,6 +260,44 @@ LLM 处理超时时间（秒）。
 - 超出部分会被截断，并在提示词中标注「diff 已截断」
 - diff 响应体本身还有 512 KiB 的读取上限，超大 PR 不会撑爆内存
 - 调大可覆盖更完整的变更，但会增加 token 消耗和响应时间
+
+
+## CI 失败智能归因配置
+
+该功能独立于 `enable_agent` 与 `enable_code_review`：`workflow_run` 以失败结论结束时，抓取失败 job 的日志尾部，调用 LLM 分析根因，并作为**独立消息**追加在原有事件消息之后。归因失败（网络、API、LLM 异常、空输出）只跳过归因，不影响原有模板消息和 webhook 响应。
+
+触发范围：
+- `workflow_run` 的 `completed` 事件
+- `conclusion` 为 `failure` / `timed_out` / `startup_failure`
+
+### enable_ci_failure_analysis
+
+**类型**: `bool` | **默认值**: `false`
+
+是否启用 CI 失败智能归因。
+
+- 需要可用的 LLM Provider（`llm_provider_id` 或会话默认 Provider）
+- 需要 `github_token` 具备 `actions:read`；未配置时直接跳过
+- 每次归因会额外消耗 GitHub API 调用与一次 LLM 调用
+
+### ci_failure_max_log_chars
+
+**类型**: `int` | **默认值**: `6000`
+
+送入 LLM 的失败日志字符上限。
+
+- 只截取日志尾部，超出部分丢弃并在提示词中标注「日志已截断」
+- 单次日志响应还有 256 KiB 的尾部保留与 8 MiB 的下载上限
+- 最多分析 3 个失败 job，避免一次失败产生过多 API 调用
+
+### ci_failure_system_prompt
+
+**类型**: `text` | **默认值**: `""`
+
+CI 失败归因的系统提示词。
+
+- 留空时使用内置默认提示词（先点明根因，再给 1-3 条修复建议）
+- 日志在进入 LLM 前会对常见 Token / 密码 / 私钥格式做尽力脱敏，但不能替代仓库侧的 Secret 管理
 
 
 ## 群内 GitHub 快捷指令

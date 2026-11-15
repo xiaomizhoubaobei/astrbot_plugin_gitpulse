@@ -55,6 +55,9 @@ main.py: PluginEntry（@register 注册的 AstrBot 入口）
        └─ 发送：context.send_message(<repo_routes 解析后的 UMO>)
             ├─ src/services/repo_router.py 解析 repo_routes（精确 → owner/* → * → target_umo）
             └─ enable_agent 时先经 src/services/llm_service.py 改写
+       └─ 可选增强（均作为独立消息追加，失败不影响主消息）
+            ├─ enable_code_review → src/services/diff_summary_service.py（拉 diff + LLM 摘要）
+            └─ enable_ci_failure_analysis → src/services/ci_failure_service.py（拉失败日志 + LLM 归因）
 
 main.py: PluginEntry.github_command（@filter.command("github")）
   └─ src/commands/github_command.py: run_github_command
@@ -71,7 +74,7 @@ main.py: PluginEntry.github_command（@filter.command("github")）
 3. 验签：只要配置了 `webhook_secret` 就必须携带 `X-Hub-Signature-256`——缺少签名头与签名不匹配均返回 401；仅在未配置 `webhook_secret` 时跳过校验；
 4. `X-GitHub-Event` 分发：`ping` 直接回 `Pong`（不受白名单影响）；`SUPPORTED_EVENT_TYPES` 内的事件先过 `enabled_events` 白名单，再交给对应 handler；未支持或未启用的事件只记日志并回 200；
 5. 支持且启用的事件在验签与白名单通过后**立即返回 200**，并通过 `asyncio.create_task` 把后续处理转入后台，避免 LLM 处理超过 GitHub 的 10 秒响应超时而触发重复推送；插件卸载时 `terminate` 会取消未完成的后台任务；
-6. 后台任务依次调用 handler、解析 `repo_routes`、按 `enable_agent` 走 LLM 或直接发送；处理异常只记日志，不影响已返回的响应。
+6. 后台任务依次调用 handler、解析 `repo_routes`、按 `enable_agent` 走 LLM 或直接发送；随后按配置追加 AI 变更摘要（`enable_code_review`）或 CI 失败归因（`enable_ci_failure_analysis`）作为独立消息；处理异常只记日志，不影响已返回的响应。
 
 分层职责：
 
@@ -87,6 +90,7 @@ main.py: PluginEntry.github_command（@filter.command("github")）
 | 指令 | `main.py` + `src/commands/` | 群内 `/github` 指令注册与执行编排（解析参数、调 API、生成回显） |
 | 服务 | `src/services/llm_service.py` | 调 `context.llm_generate`，超时用 `agent_timeout` |
 | 服务 | `src/services/github_command_service.py` | 群内指令的 GitHub REST 写操作与错误码 → 中文原因 |
+| 服务 | `src/services/ci_failure_service.py` | 抓取 Actions 失败日志尾部并调 LLM 归因（可选增强） |
 
 关键约定与易踩点：
 
@@ -97,6 +101,7 @@ main.py: PluginEntry.github_command（@filter.command("github")）
 - **多目标发送**：`repo_routes`（JSON 文本）由 `src/services/repo_router.py` 解析，匹配顺序为精确仓库 → `owner/*` → `*` → `target_umo`；空数组表示静音。`send_message(message, target_umos)` 逐目标发送且单目标失败不阻塞其它目标，LLM 链路同样把 `target_umos` 透传到降级发送，勿改回只读 `target_umo`。
 - **事件订阅**：`enabled_events` 由 `src/services/event_filter.py` 解析，留空表示全部启用；配置非法时返回空集合（禁用全部可订阅事件）而不是当作未配置，防止拼写错误意外放开全部事件。新增事件类型须同时加入 `SUPPORTED_EVENT_TYPES`、schema 提示与文档。`workflow_run` 只转发 `completed`，避免 CI 进行中状态刷屏。
 - **LLM 是可选增强**：任何 LLM 异常、空输出、超时，或输出丢失模板中的核心链接，都必须回落到模板消息，不能让 webhook 请求失败。
+- **CI 失败归因是可选增强**：只处理 `workflow_run` 的 `failure` / `timed_out` / `startup_failure`；日志只取尾部、按 `ci_failure_max_log_chars` 截断，送 LLM 前对常见凭据格式脱敏；`github_token` 需 `actions:read`，未配置时跳过；跟随 Actions 日志签名地址时**不得**携带 `Authorization`，且只接受 HTTPS 跳转；任何 API/LLM 异常都只跳过归因，模板消息不受影响。
 - **测试约定**：测试用 `from src.xxx import ...`；formatter/常量这类纯逻辑直接单测，新增动作映射时同步补参数化用例。
 - **群内写指令必须显式授权**：`/github merge|close|reopen|comment` 会真实改动仓库，四道闸门缺一不可——① `enable_github_commands` 总开关；② `github_command_repos` 白名单（**留空即全部拒绝**，不要改成「未配置就放开」）；③ `github_command_admin_only`（默认 `true`，走 `event.is_admin()`）；④ `github_token` 必须具备目标仓库写权限。请求路径只能由「校验过的 `owner/repo` + 编号」拼出，禁止接受外部传入的 URL（SSRF）。错误码统一在 `github_command_service._STATUS_HINTS` 翻成中文，原始响应体与堆栈只进日志。
 - **指令 handler 不接受框架自动拆参**：`main.py` 的 `github_command` 只收 `event` 一个参数，正文与合并方式自行用 `parse_command_line` 切分——框架的自动拆参会把评论正文按空格切碎。`filter.command` 的别名是**静态注册**，是否放行由配置决定，不要试图运行时增删别名。

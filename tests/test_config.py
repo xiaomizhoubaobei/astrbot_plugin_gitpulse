@@ -7,6 +7,7 @@ from astrbot.api import AstrBotConfig
 from src.core.config import PluginConfig
 from src.core.constants import (
     DEFAULT_BIND_HOST,
+    DEFAULT_CI_FAILURE_MAX_LOG_CHARS,
     DEFAULT_CODE_REVIEW_MAX_DIFF_CHARS,
     DEFAULT_PORT,
 )
@@ -112,3 +113,26 @@ def test_config_code_review_defaults_and_overrides(tmp_path):
         config_data["code_review_max_diff_chars"] = invalid
         fallback = PluginConfig(_make_config(tmp_path, config_data))
         assert fallback.code_review_max_diff_chars == DEFAULT_CODE_REVIEW_MAX_DIFF_CHARS
+
+
+def test_config_ci_failure_defaults_and_overrides(tmp_path):
+    """CI 失败归因配置应支持自定义值，非法上限回落到默认值."""
+    defaults = PluginConfig(_make_config(tmp_path, {}))
+    assert defaults.enable_ci_failure_analysis is False
+    assert defaults.ci_failure_max_log_chars == DEFAULT_CI_FAILURE_MAX_LOG_CHARS
+    assert defaults.ci_failure_system_prompt == ""
+
+    config_data = {
+        "enable_ci_failure_analysis": True,
+        "ci_failure_max_log_chars": 4000,
+        "ci_failure_system_prompt": "  custom prompt  ",
+    }
+    plugin_config = PluginConfig(_make_config(tmp_path, config_data))
+    assert plugin_config.enable_ci_failure_analysis is True
+    assert plugin_config.ci_failure_max_log_chars == 4000
+    assert plugin_config.ci_failure_system_prompt == "custom prompt"
+
+    for invalid in (0, -100, "not-a-number"):
+        config_data["ci_failure_max_log_chars"] = invalid
+        fallback = PluginConfig(_make_config(tmp_path, config_data))
+        assert fallback.ci_failure_max_log_chars == DEFAULT_CI_FAILURE_MAX_LOG_CHARS

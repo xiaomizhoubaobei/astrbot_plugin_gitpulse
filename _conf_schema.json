@@ -93,7 +93,7 @@
     "description": "GitHub Token（可选）",
     "type": "string",
     "default": "",
-    "hint": "GitHub Token。用于两类用途：① 拉取 diff 生成 AI 变更摘要（公开仓库可留空，受 60 次/小时未认证限额约束；私有仓库必须填写读取权限）；② 群内 GitHub 快捷指令的写操作（需 repos 写权限，未配置时写指令直接拒绝）。Token 只用于访问 api.github.com。"
+    "hint": "GitHub Token。用于三类用途：① 拉取 diff 生成 AI 变更摘要（公开仓库可留空，受 60 次/小时未认证限额约束；私有仓库必须填写读取权限）；② 群内 GitHub 快捷指令的写操作（需 repos 写权限，未配置时写指令直接拒绝）；③ 拉取 Actions 失败日志做 CI 归因（需 actions:read，未配置时跳过归因）。Token 只用于访问 api.github.com。"
   },
   "code_review_max_diff_chars": {
     "description": "送入 LLM 的 diff 字符上限",
@@ -105,6 +105,29 @@
     },
     "default": 12000,
     "hint": "diff 超过该长度时只截取前 N 个字符送给 LLM，避免长 PR 撑爆上下文。默认 12000。"
+  },
+  "enable_ci_failure_analysis": {
+    "description": "启用 CI 失败智能归因",
+    "type": "bool",
+    "default": false,
+    "hint": "启用后，workflow_run 以 failure / timed_out / startup_failure 结束时，会抓取失败 job 的日志尾部并调用 LLM 分析根因，作为独立消息追加。需要 github_token（actions:read）与可用的 LLM Provider；归因失败只跳过，不影响原有模板消息。"
+  },
+  "ci_failure_max_log_chars": {
+    "description": "送入 LLM 的失败日志字符上限",
+    "type": "int",
+    "slider": {
+      "min": 1000,
+      "max": 20000,
+      "step": 1000
+    },
+    "default": 6000,
+    "hint": "只截取日志尾部 N 个字符送给 LLM，避免超长日志撑爆上下文。默认 6000。"
+  },
+  "ci_failure_system_prompt": {
+    "description": "CI 失败归因系统提示词",
+    "type": "text",
+    "default": "",
+    "hint": "自定义失败归因的分析口径；留空使用内置默认提示词（先点明根因，再给 1-3 条修复建议）。"
   },
   "enable_github_commands": {
     "description": "启用群内 GitHub 快捷指令",

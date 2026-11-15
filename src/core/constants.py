@@ -136,6 +136,39 @@ WORKFLOW_CONCLUSION_NEUTRAL = "neutral"
 WORKFLOW_CONCLUSION_STALE = "stale"
 WORKFLOW_CONCLUSION_STARTUP_FAILURE = "startup_failure"
 
+# CI 失败智能归因（可选增强）：workflow_run 以失败/超时/启动失败结束时，
+# 抓取失败 job 的日志尾部交给 LLM 分析根因。
+# 单次送入 LLM 的日志字符上限；字符上限与下面按字节读取的上限是两道独立闸门。
+DEFAULT_CI_FAILURE_MAX_LOG_CHARS = 6000
+
+# 日志响应只保留尾部若干字节：失败信息通常位于日志末尾。若服务端忽略
+# Range 请求，则最多下载 MAX_CI_LOG_DOWNLOAD_BYTES 并保留最后一段，避免
+# 超大日志撑爆内存或带宽。
+MAX_CI_LOG_TAIL_BYTES = 256 * 1024
+MAX_CI_LOG_DOWNLOAD_BYTES = 8 * 1024 * 1024
+
+# 拉取 Actions job 日志的 HTTP 超时（秒），独立于 LLM 的 agent_timeout。
+CI_LOG_FETCH_TIMEOUT = 15.0
+
+# 单条归因结论的输出上限，避免 LLM 长篇大论刷屏。
+MAX_CI_ANALYSIS_CHARS = 1000
+
+# 只有确属失败的结论才产生可分析的失败日志；cancelled/skipped/neutral 等
+# 不代表构建失败，不做归因。
+CI_FAILURE_CONCLUSIONS = frozenset(
+    {
+        WORKFLOW_CONCLUSION_FAILURE,
+        WORKFLOW_CONCLUSION_TIMED_OUT,
+        WORKFLOW_CONCLUSION_STARTUP_FAILURE,
+    }
+)
+
+# 失败归因的默认系统提示词；配置 ci_failure_system_prompt 可覆盖。
+CI_FAILURE_SYSTEM_PROMPT = (
+    "你是一名资深 CI/CD 排障工程师，擅长从构建日志中定位失败根因。"
+    "只输出中文分析结论，不要输出任何多余解释。"
+)
+
 # Star 事件：新版 star 事件用 created/deleted，旧版 watch 事件用 started
 ACTION_STAR_CREATED = "created"
 ACTION_STAR_DELETED = "deleted"
