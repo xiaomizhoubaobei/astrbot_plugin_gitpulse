@@ -272,14 +272,18 @@ def test_build_failure_context_includes_metadata():
 
 def test_redact_secrets_covers_common_credentials():
     """常见 Token、密码与私钥格式应被替换为 ***."""
+    # 拆开拼接 PEM 头尾，避免测试夹具被 detect-private-key 误判为真实私钥。
+    private_key = (
+        "-----BEGIN " + "RSA PRIVATE KEY-----\nsecret\n"
+        "-----END " + "RSA PRIVATE KEY-----"
+    )
     text = (
         "ghp_abcdefghijklmnopqrstuvwxyz0123456789\n"
         "github_pat_11ABCDEFG0123456789_abcdefghij\n"
         "AKIAABCDEFGHIJKLMNOP\n"
         "password: hunter2\n"
         "Authorization: Bearer abc.def.ghi\n"
-        "-----BEGIN RSA PRIVATE KEY-----\nsecret\n"
-        "-----END RSA PRIVATE KEY-----\n"
+        f"{private_key}\n"
         "normal log line"
     )
 
@@ -290,7 +294,7 @@ def test_redact_secrets_covers_common_credentials():
     assert "AKIA" not in redacted
     assert "hunter2" not in redacted
     assert "Bearer abc.def.ghi" not in redacted
-    assert "BEGIN RSA PRIVATE KEY" not in redacted
+    assert "PRIVATE KEY" not in redacted
     assert "normal log line" in redacted
 
 

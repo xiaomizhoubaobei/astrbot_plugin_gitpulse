@@ -20,7 +20,6 @@ import re
 from typing import Any, Mapping
 
 import aiohttp
-
 from astrbot.api import logger
 
 from ..core.constants import (
