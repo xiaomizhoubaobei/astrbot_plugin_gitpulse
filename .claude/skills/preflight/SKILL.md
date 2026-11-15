@@ -38,14 +38,21 @@ CNB 开发容器会把上游 AstrBot 的 `astrbot/` 包复制到仓库根，导�
 ```bash
 set -e
 PYTHON="${PYTHON:-/opt/conda/bin/python3}"   # 选已装依赖的解释器
-ASIDE=""
+MOVED=()
 for d in astrbot AstrBot; do
   if [ -d "$d" ]; then
-    ASIDE="$d"
     mv "$d" "/tmp/${d}.preflight-aside"
+    MOVED+=("$d")
   fi
 done
-restore() { [ -n "$ASIDE" ] && mv "/tmp/${ASIDE}.preflight-aside" "./${ASIDE}"; }
+# 两个目录可能同时存在：逐个复原，不能只记最后一个。
+restore() {
+  for d in "${MOVED[@]}"; do
+    if [ -e "/tmp/${d}.preflight-aside" ]; then
+      mv "/tmp/${d}.preflight-aside" "./${d}"
+    fi
+  done
+}
 trap restore EXIT
 
 "$PYTHON" -m pytest tests -q
