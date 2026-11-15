@@ -178,6 +178,14 @@ def _log_url(repo="owner/repo", job_id=456):
     return f"{service.GITHUB_API_BASE}/repos/{repo}/actions/jobs/{job_id}/logs"
 
 
+# 假 Token 刻意短于 DevSkim DS173239 的 36 字符阈值，避免测试夹具被误报；
+# 仍满足脱敏正则要求的 10 字符下限。
+FAKE_GITHUB_TOKEN = "ghp_abcdefghijklmnopqrstuvwxyz"
+
+# 非 HTTPS 地址用于验证重定向拒绝逻辑；这是测试夹具，非生产 URL。
+INSECURE_URL = "http://evil.example/log"  # DevSkim: ignore DS137138
+
+
 JOBS_JSON = """{
   "jobs": [
     {
@@ -278,7 +286,7 @@ def test_redact_secrets_covers_common_credentials():
         "-----END " + "RSA PRIVATE KEY-----"
     )
     text = (
-        "ghp_abcdefghijklmnopqrstuvwxyz0123456789\n"
+        f"{FAKE_GITHUB_TOKEN}\n"
         "github_pat_11ABCDEFG0123456789_abcdefghij\n"
         "AKIAABCDEFGHIJKLMNOP\n"
         "password: hunter2\n"
@@ -453,11 +461,7 @@ async def test_fetch_job_log_rejects_non_https_redirect(monkeypatch):
     """拒绝跟随非 HTTPS 的重定向地址."""
     calls = _patch_session(
         monkeypatch,
-        {
-            _log_url(): _FakeResponse(
-                status=302, headers={"Location": "http://evil.example/log"}
-            )
-        },
+        {_log_url(): _FakeResponse(status=302, headers={"Location": INSECURE_URL})},
     )
 
     assert await service.fetch_job_log("owner/repo", 456, "t0ken") == ""
@@ -539,7 +543,7 @@ async def test_analyze_workflow_failure_generates_analysis(monkeypatch):
             _log_url(): _FakeResponse(status=302, headers={"Location": signed_url}),
             signed_url: _FakeResponse(
                 status=206,
-                payload=b"error: ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+                payload=b"error: " + FAKE_GITHUB_TOKEN.encode(),
             ),
         },
     )
