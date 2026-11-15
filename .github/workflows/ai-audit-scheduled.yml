@@ -30,8 +30,11 @@
 #
 # 触发设计：
 #   - workflow_run：监听 CodeQL.yml（name: "代码质量分析"）的 completed 事件。
-#     仅当上游运行成功、且其 head 分支属于**本仓库**（非 fork）时才进入 triage
-#     （见 jobs.triage.if 的 head_repository 门禁），从源头掐断 fork 源码流入。
+#     仅接受**默认分支（main）**上的运行（`on.workflow_run.branches`）：本审计
+#     消费仓库当前 open 的 CodeQL 告警，与具体 PR 无关；若 PR 分支扫描也各自
+#     触发，会按 PR 数量堆积在串行队列里。随后再校验上游运行成功、且 head 仓库
+#     属于**本仓库**（非 fork）才进入 triage（见 jobs.triage.if），从源头掐断
+#     fork 源码流入。
 #   - workflow_dispatch：保留手动触发以便首次部署验证，但**不得**让任意分支的源码
 #     流入持有 GH_PAT 的 publish job。威胁：手动触发会以「所选 ref 的源码」运行，
 #     若允许在任意分支/任意 ref 上触发，等于任何有 workflow 运行权限的人都可拿一个
@@ -92,6 +95,10 @@ on:
     # 监听 CodeQL.yml 的 workflow 名（.github/workflows/CodeQL.yml 的 name: "代码质量分析"）
     workflows: ["代码质量分析"]
     types: [completed]
+    # 只接受默认分支上的 CodeQL 运行：本审计消费的是「仓库当前 open 的 CodeQL
+    # 告警」，与具体 PR 无关。若 PR 分支扫描也各自触发，会按 PR 数量堆积在
+    # concurrency 队列里，并与 publish 的串行化互相拖慢。
+    branches: [main]
   workflow_dispatch:  # 保留手动触发，便于首次部署时验证链路
 
 permissions:
@@ -100,9 +107,10 @@ permissions:
   contents: read
 
 # ── 并发串行化（防重复 Issue 的第一道闸） ────────────────────────────────────
-# 成因：workflow_run 由「CodeQL 完成」驱动，而 CodeQL 在 push / PR / schedule
-#       多个入口下可能**短时间内并发完成**，从而同时拉起多个本工作流实例。
-#       此时两个 publish job 会同时走到「先查是否存在、再创建」的判定点，
+# 成因：workflow_run 由「CodeQL 完成」驱动；PR 分支已被 branches 过滤，但 main
+#       上的 push / schedule 与手动触发仍可能**短时间内并发完成**，从而同时
+#       拉起多个本工作流实例。此时两个 publish job 会同时走到
+#       「先查是否存在、再创建」的判定点，
 #       双双读到「不存在」→ 双双 POST → 同一漏洞被建成两条 Issue。
 # 对策：把整条流水线收敛到**同一个 concurrency group**，并禁用排队取消
 #       （cancel-in-progress: false）——后来者**排队等待**前一次跑完，而不是被
@@ -141,12 +149,16 @@ jobs:
     #      即便手选其它分支，执行的 triage 源码仍是已合并的可信代码）；
     #   2) workflow_run 需上游 CodeQL 成功完成（避免失败/取消的过期扫描状态）；
     #   3) 【安全关键】上游运行的 head 仓库必须是本仓库，即 fork PR 触发的
-    #      CodeQL 运行**一律不进入本工作流**，杜绝 PR 源码充当不可信输入。
+    #      CodeQL 运行**一律不进入本工作流**，杜绝 PR 源码充当不可信输入；
+    #   4) workflow_run 只接受**默认分支**上的运行（on.workflow_run.branches
+    #      过滤的纵深防御）：PR 分支的扫描不触发仓库级审计，避免按 PR 数量
+    #      堆积在 concurrency 队列里。
     if: >-
       (github.event_name == 'workflow_dispatch' &&
        github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == github.event.repository.default_branch &&
        github.event.workflow_run.head_repository.full_name == github.repository)
     steps:
       # 只读出站加固运行器（audit 模式：记录所有出站调用，便于事后审计）

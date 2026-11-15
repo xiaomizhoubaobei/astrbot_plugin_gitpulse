@@ -191,5 +191,5 @@ curl -sS -X PATCH \
 ## CI 概览
 
 - `.github/workflows/coverage.yml`：push/PR 到 `main` 时在 Python 3.13/3.14/3.15 上跑测试，`--source=src` 统计覆盖率，仅 3.13 上报 Codecov（`codecov.yml`，项目/补丁门禁均为 informational）。
-- 其余 GitHub Actions：CodeQL、Bandit/DevSkim/trufflehog 安全扫描、依赖审计、Scorecard，以及 `ai-audit-scheduled.yml`（CodeQL 完成后用 LLM 分流告警，`triage`/`publish` 两段式隔离令牌）。
+- 其余 GitHub Actions：CodeQL、Bandit/DevSkim/trufflehog 安全扫描、依赖审计、Scorecard，以及 `ai-audit-scheduled.yml`（仅 main 分支的 CodeQL 完成后用 LLM 分流告警，`triage`/`publish` 两段式隔离令牌）。
 - CNB 侧 `.cnb.yml` 只负责开发容器与把 `main` 同步到 GitHub 镜像，不做覆盖率上报。

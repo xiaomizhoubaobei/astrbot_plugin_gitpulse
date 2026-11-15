@@ -58,11 +58,12 @@ LLM + Taskflow Agent 逐个审计
 > - `publish` job：**唯一持有 `GH_PAT` 的 job**，**不检出/不执行任何源码**，只消费 artifact 里
 >   的结构化结论按白名单字段建 Issue。
 >
-> 之所以必须这样拆：`workflow_run` 会为 **PR（含 fork）触发的 CodeQL 运行**也开火，而 PR 源码
+> 之所以必须这样拆：`workflow_run` 原本会为 **PR（含 fork）触发的 CodeQL 运行**也开火，而 PR 源码
 > 由提交者控制；若让持令牌的 job 同时执行 PR 源码，fork 提交者即可借 PR 改写审计模板，
-> 驱动 agent 拿高权限 PAT 发文（典型 pwn-request）。因此本工作流还有两道源头门禁：
-> ① `triage` job 的 `if` 要求上游运行的 `head_repository` 必须是**本仓库**，fork PR 触发的
-> CodeQL 运行一律不进入；② checkout 只认**可信 ref**，绝不用事件携带的 PR head。
+> 驱动 agent 拿高权限 PAT 发文（典型 pwn-request）。因此本工作流还有三道源头门禁：
+> ① `on.workflow_run.branches` 只接受**默认分支（main）**的 CodeQL 运行，PR 分支扫描不进入；
+> ② `triage` job 的 `if` 要求上游运行的 `head_repository` 必须是**本仓库**，fork PR 触发的
+> CodeQL 运行一律不进入；③ checkout 只认**可信 ref**，绝不用事件携带的 PR head。
 
 > ⚠️ `publish` job 会**真实创建 Issue**。若你只想看分流结果、不修改仓库，
 > 请把 `ai-audit-scheduled.yml` 中的 `publish` job 整体注释掉（`triage` 仍会正常产出结论）。
@@ -238,7 +239,9 @@ hatch run main -t ai_audit.alert_triage_example \
 本仓库已随附 `.github/workflows/ai-audit-scheduled.yml`，配置好所需 Secrets 后即可自动（或手动）运行 AI 审计：
 
 - **自动触发**：默认监听 `CodeQL.yml`（name: `代码质量分析`）的 `completed` 事件，
-  在 CodeQL 扫完后确定性地运行，保证消费最新告警；同时保留 `workflow_dispatch` 手动触发。
+  且只接受**默认分支（main）**上的 CodeQL 运行；PR 分支的扫描不触发仓库级审计，
+  避免每个 PR 都排一轮串行队列。CodeQL 在 main 上扫完后确定性地运行，保证消费
+  最新告警；同时保留 `workflow_dispatch` 手动触发。
   🔒 **fork 门禁**：仅当上游运行的 `head_repository` 为本仓库时才进入审计，fork PR 触发的
   CodeQL 运行一律跳过，从源头杜绝把 PR 源码当作不可信输入送进审计链。
 - **手动触发**：在仓库 **Actions → AI 审计（CodeQL 完成后自动分流）→ Run workflow** 手动跑一次用于验证。
