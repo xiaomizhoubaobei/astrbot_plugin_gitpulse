@@ -39,8 +39,13 @@
 #     对策（两道锁）：
 #       ① checkout 的 ref 固定为**默认分支**（绝不用 `github.ref`），故无论手选哪个
 #          分支，执行的 triage 源码恒为已合并的可信代码；
-#       ② publish job 绑定受保护的 `environment`（需人工审批），把「持令牌发文」
-#          收窄到获批主体。
+#       ② publish job 按触发事件选择环境：
+#          · `workflow_dispatch` → 受保护的 `ai-audit-publish`（required reviewers），
+#            把「持令牌发文」收窄到获批主体；
+#          · `workflow_run` → 无保护规则的 `ai-audit-publish-auto`，自动执行。
+#          自动触发链路已由「默认分支工作流 + 默认分支源码 + 非 fork + 加密
+#          artifact」四重约束把关，无需再叠加人工审批；审批只留给可被任意
+#          有运行权限者手动触发的场景。
 #     ⚠️ 请勿把 checkout 的 ref 改回 `github.ref`——那会让所选分支的源码进入
 #        高权限链，重新打开本条门禁。
 #
@@ -344,13 +349,17 @@ jobs:
     runs-on: ubuntu-latest
     # 仅当上游确实产出了结论时才跑
     if: needs.triage.result == 'success'
-    # 🔒 受保护环境（人工审批门禁）：这是「持 GH_PAT 发真实 Issue/公告」的唯一出口，
-    #    绑定 environment 后，未获批的运行会在此 job **暂停等待审批**，
-    #    把高权限动作收窄到经授权的主体（尤其对手动触发场景）。
-    #    ⚠️ 需在仓库 Settings → Environments 建同名环境并配置 required reviewers；
-    #       未配置时 jobs 会因 environment 不存在而失败，请一并完成。
+    # 🔒 发布出口（持 GH_PAT 建真实 Issue/公告）按触发来源分环境：
+    #    · workflow_dispatch → `ai-audit-publish`（required reviewers，人工审批）；
+    #    · workflow_run      → `ai-audit-publish-auto`（无保护规则，自动执行）。
+    #    自动链路的工作流文件与 triage 源码均取自默认分支，且上游已用
+    #    head_repository 门禁排除 fork，发布内容只来自加密 artifact；人工审批
+    #    仅用于收窄「任意有运行权限者手动触发」的场景。
+    #    ⚠️ 需在仓库 Settings → Environments 为 `ai-audit-publish` 配置
+    #       required reviewers；`ai-audit-publish-auto` 首次被引用时由 GitHub
+    #       自动创建为无保护环境，无需手工配置。
     environment:
-      name: ai-audit-publish
+      name: ${{ github.event_name == 'workflow_dispatch' && 'ai-audit-publish' || 'ai-audit-publish-auto' }}
     permissions:
       # 仍保持最小权限：建 Issue 走 GH_PAT，不依赖 GITHUB_TOKEN 写能力
       contents: read
