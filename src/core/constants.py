@@ -48,6 +48,9 @@ MAX_SUMMARY_CHARS = 1000
 # 避免两处各自硬编码导致口径漂移。
 GITHUB_API_BASE = "https://api.github.com"
 
+# GitHub 网页根地址：用于回显 PR / Issue 的可点击链接。
+GITHUB_WEB_BASE = "https://github.com"
+
 # 群内 GitHub 快捷指令（merge / close / reopen / comment）的单次 API 超时（秒）。
 # 群聊场景对响应时延敏感，超时后直接回显失败原因，不让指令长时间挂起。
 GITHUB_COMMAND_TIMEOUT = 10.0

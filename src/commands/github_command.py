@@ -8,6 +8,7 @@ AstrBot 的指令 handler 位于 ``main.py``（handler 需绑定插件实例）�
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from astrbot.api import logger
@@ -37,15 +38,28 @@ COMMAND_HELP = (
     "编号可写作 12、#12 或 owner/repo#12；未写仓库时用配置里的默认仓库。"
 )
 
+# 指令主词（含 filter.command 注册的短别名）。首个词命中时剥掉，
+# 其余首词（merge / close / reopen / comment）按动作处理。
+COMMAND_PREFIXES = frozenset({"github", "gh"})
 
-def parse_command_line(text: str, command: str = "github") -> tuple[str, str, str]:
+# filter.command 的动作别名：首词本身就是动作（如 ``/merge 12``）。
+ACTION_COMMAND_ALIASES = frozenset({"merge", "close", "reopen", "comment"})
+
+# ``owner/repo 12`` 这种以空格分隔编号的写法，折叠成 ``owner/repo#12``，
+# 剩余部分（合并方式 / 评论正文）原样保留。
+_SPACE_NUMBER_PATTERN = re.compile(r"#?(\d+)(?:\s+|$)")
+
+
+def parse_command_line(text: str) -> tuple[str, str, str]:
     """把群消息文本切成 ``(action, target, extra)``.
 
     入参是唤醒前缀已被 AstrBot 剥掉的消息文本（形如 ``github close 12``）。
-    首个词与 ``command`` 一致时剥掉，其余按空白切分：
+    首个词是 ``github`` / ``gh`` 时剥掉，其余按空白切分：
 
     - ``github merge 12 squash`` → ``("merge", "12", "squash")``
+    - ``gh close 12`` → ``("close", "12", "")``
     - ``github close owner/repo#5`` → ``("close", "owner/repo#5", "")``
+    - ``github close owner/repo 5`` → ``("close", "owner/repo#5", "")``
     - ``github comment 12 正文...`` → ``("comment", "12", "正文...")``
 
     只切前两个词，``extra`` 保留原始空白后的完整正文（评论正文可含空格）。
@@ -55,14 +69,30 @@ def parse_command_line(text: str, command: str = "github") -> tuple[str, str, st
         return "", "", ""
 
     head, _, rest = raw.partition(" ")
-    if head.lower() != command.lower():
-        # 兼容别名或带前缀的写法：只在首词不是本指令时保留整串
+    if head.lower() not in COMMAND_PREFIXES:
+        # 兼容别名写法（/merge <编号>）：首词本身就是动作
         rest = raw
     parts = rest.split(None, 2)
     action = parts[0] if parts else ""
     target = parts[1] if len(parts) > 1 else ""
     extra = parts[2].strip() if len(parts) > 2 else ""
+    target, extra = _fold_space_target(target, extra)
     return action.lower(), target, extra
+
+
+def _fold_space_target(target: str, extra: str) -> tuple[str, str]:
+    """把 ``owner/repo 12`` 形式的编号折进 target，返回 ``(target, extra)``.
+
+    仅当 target 是带斜杠、尚未带 ``#`` 的仓库名，且 extra 以编号开头时折叠；
+    ``owner/repo#12`` 已带编号的写法保持不变。
+    """
+    if "#" in target or "/" not in target or not extra:
+        return target, extra
+    match = _SPACE_NUMBER_PATTERN.match(extra)
+    if not match:
+        return target, extra
+    rest = extra[match.end() :].strip()
+    return f"{target}#{match.group(1)}", rest
 
 
 def _require_token(token: str) -> str:

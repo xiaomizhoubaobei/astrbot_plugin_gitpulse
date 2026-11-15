@@ -53,6 +53,14 @@ async def _collect(gen):
         ("github comment 12 你好 世界", ("comment", "12", "你好 世界")),
         ("github", ("", "", "")),
         ("close 12", ("close", "12", "")),
+        ("gh merge 12", ("merge", "12", "")),
+        ("gh close owner/repo#5", ("close", "owner/repo#5", "")),
+        ("gh", ("", "", "")),
+        ("github close owner/repo 12", ("close", "owner/repo#12", "")),
+        ("github merge owner/repo 12 rebase", ("merge", "owner/repo#12", "rebase")),
+        ("github comment owner/repo 12 已修复", ("comment", "owner/repo#12", "已修复")),
+        # 带仓库但 extra 不是编号时不做折叠，原样交给后续校验
+        ("github merge owner/repo squash", ("merge", "owner/repo", "squash")),
     ],
 )
 def test_parse_command_line(text, expected):
@@ -133,6 +141,24 @@ async def test_command_reports_success(monkeypatch):
     assert "owner/repo#12" in results[0]["text"]
     assert calls["method"] == "squash"
     assert calls["token"] == "t0ken"
+
+
+@pytest.mark.asyncio
+async def test_command_supports_gh_alias(monkeypatch):
+    """``/gh`` 与 ``/github`` 等价的短别名必须真正可用."""
+    calls = {}
+
+    async def _fake_merge(repo, number, token, method):
+        calls.update(repo=repo, number=number)
+        return command_module.CommandOutcome(ok=True, detail="合并方式：squash")
+
+    monkeypatch.setattr(command_module, "merge_pull_request", _fake_merge)
+    plugin = _make_entry()
+
+    results = await _collect(plugin.github_command(_FakeEvent("gh merge 12")))
+
+    assert "owner/repo#12" in results[0]["text"]
+    assert calls["number"] == 12
 
 
 @pytest.mark.asyncio

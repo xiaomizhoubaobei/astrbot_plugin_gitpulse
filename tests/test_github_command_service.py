@@ -166,6 +166,7 @@ async def test_merge_pull_request_success(monkeypatch):
     assert outcome.ok is True
     assert "squash" in outcome.detail
     assert "abcdef0" in outcome.detail
+    assert outcome.url == service.GITHUB_WEB_BASE + "/owner/repo/pull/12"
     assert captured["method"] == "PUT"
     assert (
         captured["url"] == service.GITHUB_API_BASE + "/repos/owner/repo/pulls/12/merge"
@@ -266,6 +267,30 @@ async def test_request_survives_non_json_body(monkeypatch):
 
     assert outcome.ok is False
     assert "5xx" in outcome.error or "502" in outcome.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("action", "expect"),
+    [
+        ("merge", "合并"),
+        ("comment", "评论"),
+        ("close", "Issue"),
+    ],
+)
+async def test_422_hint_depends_on_action(monkeypatch, action, expect):
+    """422 的中文原因按动作区分，不用一句笼统文案误导群成员."""
+    _patch_session(monkeypatch, _FakeResponse(422, '{"message": "invalid"}'))
+
+    if action == "merge":
+        outcome = await service.merge_pull_request("owner/repo", 12, "t0ken")
+    elif action == "comment":
+        outcome = await service.create_issue_comment("owner/repo", 12, "t0ken", "hi")
+    else:
+        outcome = await service.set_issue_state("owner/repo", 12, "t0ken", close=True)
+
+    assert outcome.ok is False
+    assert expect in outcome.error
 
 
 # --------------------------------------------------------------------------

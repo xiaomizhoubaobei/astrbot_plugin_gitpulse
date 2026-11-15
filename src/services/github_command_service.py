@@ -23,6 +23,7 @@ from ..core.constants import (
     DEFAULT_MERGE_METHOD,
     GITHUB_API_BASE,
     GITHUB_COMMAND_TIMEOUT,
+    GITHUB_WEB_BASE,
     ISSUE_STATE_CLOSED,
     ISSUE_STATE_OPEN,
     MAX_COMMAND_COMMENT_CHARS,
@@ -43,7 +44,6 @@ _STATUS_HINTS = {
     401: "GitHub Token 无效或已过期，请维护者检查插件配置",
     403: "GitHub 拒绝了本次操作：Token 权限不足，或已触发 API 限流",
     404: "找不到该仓库或编号；私有仓库需要 Token 具备访问权限",
-    422: "GitHub 拒绝了本次请求，编号可能不是 PR，或该仓库未开启 Issues",
     429: "触发 GitHub API 限流，请稍后重试",
 }
 
@@ -217,6 +217,13 @@ def _api_error(status: int, action: str) -> str:
         return "该 PR 当前无法合并：可能已合并/已关闭，或存在冲突、缺少必需检查"
     if status == 409 and action == "merge":
         return "PR 的 head 分支刚刚被修改，请稍后重试合并"
+    if status == 422:
+        # 422 的含义随动作不同，避免用一句笼统文案误导群成员。
+        if action == "merge":
+            return "GitHub 拒绝了本次合并：PR 状态或合并方式不满足条件"
+        if action == "comment":
+            return "GitHub 拒绝了本次评论：正文可能不符合要求，或该目标不支持评论"
+        return "GitHub 拒绝了本次请求：编号可能不是 Issue / PR，或该仓库未开启 Issues"
     if status >= 500:
         return "GitHub 服务异常（5xx），请稍后重试"
     return f"GitHub API 返回 HTTP {status}，操作未生效"
@@ -294,7 +301,9 @@ async def merge_pull_request(
     detail = f"合并方式：{method}"
     if sha:
         detail += f" · 合并提交 {sha[:7]}"
-    return CommandOutcome(ok=True, detail=detail)
+    # merge 接口的响应不含 html_url，按仓库名与编号拼出 PR 链接。
+    url = f"{GITHUB_WEB_BASE}/{repo}/pull/{number}"
+    return CommandOutcome(ok=True, detail=detail, url=url)
 
 
 async def set_issue_state(

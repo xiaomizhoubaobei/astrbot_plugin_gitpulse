@@ -11,16 +11,19 @@ from astrbot.api.star import Context, Star, register
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.commands.github_command import (  # noqa: E402
+    ACTION_COMMAND_ALIASES,
     COMMAND_HELP,
+    COMMAND_PREFIXES,
     parse_command_line,
     run_github_command,
 )
 from src.core.plugin import GitHubWebhookPlugin  # noqa: E402
 
-# 群内快捷指令的别名：/github 为主指令，其余为便捷写法（如 /merge #12）。
-# 别名静态注册（AstrBot 的指令注册不支持运行时增删），是否真正放行由
-# enable_github_commands 配置决定，未启用时只回一句提示不执行任何写操作。
-_COMMAND_ALIASES = {"gh", "merge", "close", "reopen", "comment"}
+# 群内快捷指令的别名：/github 为主指令，gh 是它的短写（解析时同样剥掉），
+# merge / close / reopen / comment 首词即动作。别名静态注册（AstrBot 的指令
+# 注册不支持运行时增删），是否真正放行由 enable_github_commands 配置决定，
+# 未启用时只回一句提示不执行任何写操作。
+_COMMAND_ALIASES = {*ACTION_COMMAND_ALIASES, *(COMMAND_PREFIXES - {"github"})}
 
 
 @register(
