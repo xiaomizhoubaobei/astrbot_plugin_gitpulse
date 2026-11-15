@@ -24,12 +24,11 @@ from ..core.constants import (
     DIFF_FETCH_TIMEOUT,
     EVENT_TYPE_PULL_REQUEST,
     EVENT_TYPE_PUSH,
+    GITHUB_API_BASE,
     MAX_DIFF_RESPONSE_BYTES,
     MAX_SUMMARY_CHARS,
 )
 from .llm_service import resolve_provider_id
-
-_GITHUB_API_BASE = "https://api.github.com"
 
 # GitHub 仓库全名只允许 owner/repo 形式的常规字符，杜绝路径穿越。
 _REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -87,7 +86,7 @@ def build_diff_url(event_type: str, data: Mapping[str, Any]) -> str | None:
         number = pull_request.get("number")
         if not isinstance(number, int) or number <= 0:
             return None
-        return f"{_GITHUB_API_BASE}/repos/{repo_name}/pulls/{number}"
+        return f"{GITHUB_API_BASE}/repos/{repo_name}/pulls/{number}"
 
     if event_type == EVENT_TYPE_PUSH:
         if not data.get("commits"):
@@ -97,8 +96,8 @@ def build_diff_url(event_type: str, data: Mapping[str, Any]) -> str | None:
         if not _SHA_PATTERN.fullmatch(after):
             return None
         if _SHA_PATTERN.fullmatch(before) and not _ZERO_SHA_PATTERN.fullmatch(before):
-            return f"{_GITHUB_API_BASE}/repos/{repo_name}/compare/{before}...{after}"
-        return f"{_GITHUB_API_BASE}/repos/{repo_name}/commits/{after}"
+            return f"{GITHUB_API_BASE}/repos/{repo_name}/compare/{before}...{after}"
+        return f"{GITHUB_API_BASE}/repos/{repo_name}/commits/{after}"
 
     return None
 
